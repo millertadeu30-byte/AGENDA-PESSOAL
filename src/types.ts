@@ -6,6 +6,7 @@ export interface Tarefa {
   horario: string; // HH:MM
   recorrencia: "Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual";
   status: "Pendente" | "Realizada";
+  notificado?: boolean;
 }
 
 export interface ClientData {

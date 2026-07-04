@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import webpush from "web-push";
 
 // No Vercel, o sistema de arquivos é read-only exceto pela pasta /tmp.
 // Usamos /tmp/database.json no Vercel para permitir escritas rápidas,
@@ -8,6 +9,34 @@ import path from "path";
 const DB_FILE = process.env.VERCEL
   ? "/tmp/database.json"
   : path.join(process.cwd(), "database.json");
+
+const VAPID_FILE = process.env.VERCEL
+  ? "/tmp/vapid.json"
+  : path.join(process.cwd(), "vapid.json");
+
+let vapidKeys: { publicKey: string; privateKey: string };
+
+if (fs.existsSync(VAPID_FILE)) {
+  try {
+    vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, "utf-8"));
+  } catch (e) {
+    vapidKeys = webpush.generateVAPIDKeys();
+    try {
+      fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), "utf-8");
+    } catch (_) {}
+  }
+} else {
+  vapidKeys = webpush.generateVAPIDKeys();
+  try {
+    fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), "utf-8");
+  } catch (_) {}
+}
+
+webpush.setVapidDetails(
+  "mailto:millertadeu30@gmail.com",
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
 
 // Estrutura do nosso banco de dados persistente em JSON
 interface Cliente {
@@ -17,6 +46,7 @@ interface Cliente {
   senha: string;
   vencimento: string; // YYYY-MM-DD
   status: string; // "Ativo" | "Pago" | "Vitalício" | "Inadimplente"
+  pushSubscription?: any;
 }
 
 interface Tarefa {
@@ -27,6 +57,7 @@ interface Tarefa {
   horario: string; // HH:MM
   recorrencia: "Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual";
   status: "Pendente" | "Realizada";
+  notificado?: boolean;
 }
 
 interface Database {
@@ -199,6 +230,33 @@ app.use(express.json());
 
 // Cria um Router para encapsular todos os endpoints e suportar qualquer variação de prefixo no Vercel
 const router = express.Router();
+
+// Rota para obter a chave pública VAPID para registro do Web Push
+router.get("/notifications/public-key", (req, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+// Rota para salvar a inscrição do Web Push do cliente
+router.post("/notifications/subscribe", (req, res) => {
+  const { token, subscription } = req.body;
+  if (!token) {
+    return res.status(400).json({ erro: "Token do usuário é obrigatório." });
+  }
+  if (!subscription) {
+    return res.status(400).json({ erro: "Inscrição de notificação é obrigatória." });
+  }
+
+  const db = readDB();
+  const cliente = db.clientes.find(c => c.token === token);
+  if (!cliente) {
+    return res.status(404).json({ erro: "Cliente não encontrado." });
+  }
+
+  cliente.pushSubscription = subscription;
+  writeDB(db);
+
+  res.json({ sucesso: true });
+});
 
 // Rota de registro de conta
 router.post("/auth/register", (req, res) => {
@@ -452,6 +510,54 @@ router.delete("/tasks", (req, res) => {
 // Vincula o router em ambas as rotas /api e / para prevenir diferenças de prefixos no Vercel
 app.use("/api", router);
 app.use("/", router);
+
+// Loop em segundo plano para verificar tarefas pendentes e enviar notificações de push web
+setInterval(() => {
+  try {
+    const db = readDB();
+    const agora = new Date();
+    let alterado = false;
+
+    db.tarefas.forEach(t => {
+      // Se a tarefa já está realizada ou já foi notificada por push, ignora
+      if (t.status === "Realizada" || t.notificado) return;
+
+      const taskDateTime = new Date(`${t.data}T${t.horario || "12:00"}`);
+      // Se passou do prazo
+      if (taskDateTime <= agora) {
+        const cliente = db.clientes.find(c => c.token === t.token);
+        if (cliente && cliente.pushSubscription) {
+          const payload = JSON.stringify({
+            title: "⏰ Tarefa Vencida! - TaskControl Pro",
+            body: t.tarefa,
+            tag: t.id
+          });
+
+          webpush.sendNotification(cliente.pushSubscription, payload)
+            .then(() => {
+              console.log(`[Push Notification] Enviada com sucesso para ${cliente.nome}: ${t.tarefa}`);
+            })
+            .catch(err => {
+              console.error(`[Push Notification] Erro ao enviar para ${cliente.nome}:`, err);
+              // Limpa inscrição inválida se o serviço de push retornar 410 (Gone) ou 404 (Not Found)
+              if (err.statusCode === 410 || err.statusCode === 404) {
+                cliente.pushSubscription = null;
+                writeDB(db);
+              }
+            });
+        }
+        t.notificado = true;
+        alterado = true;
+      }
+    });
+
+    if (alterado) {
+      writeDB(db);
+    }
+  } catch (err) {
+    console.error("[Background Push Timer] Erro:", err);
+  }
+}, 15000);
 
 // Tratamento de Erros Global para retornar sempre JSON e evitar travamentos no client
 app.use((err: any, req: any, res: any, next: any) => {

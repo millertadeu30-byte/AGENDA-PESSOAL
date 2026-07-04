@@ -238,7 +238,7 @@ export default function App() {
     recognition.onerror = (event: any) => {
       console.error("Erro no reconhecimento de voz:", event.error);
       if (event.error === "not-allowed") {
-        showToast("🎙️ Permissão de microfone negada. Abra o app em uma NOVA ABA para poder falar!", true);
+        showToast("🎙️ Permissão de microfone negada. Se estiver usando o APK, conceda permissão nas configurações do seu celular ou no código do app.", true);
       } else {
         showToast(`Erro de áudio: ${event.error}`, true);
       }
@@ -311,6 +311,87 @@ export default function App() {
       fetchClientData();
     }
   }, [token]);
+
+  // Função para converter chave pública VAPID do formato Base64 para Uint8Array
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  // Registra o Service Worker e configura as notificações de Push no celular/navegador
+  useEffect(() => {
+    if (!token || (clientData && clientData.isAdmin)) return;
+
+    const configurePushNotifications = async () => {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        console.warn("Este dispositivo ou navegador não suporta notificações de segundo plano.");
+        return;
+      }
+
+      try {
+        // 1. Registrar o Service Worker
+        const registration = await navigator.serviceWorker.register("/sw.js", {
+          scope: "/"
+        });
+        console.log("Service Worker registrado com sucesso:", registration);
+
+        // 2. Buscar a chave pública VAPID no servidor
+        const keyRes = await fetch("/api/notifications/public-key");
+        if (!keyRes.ok) throw new Error("Não foi possível buscar a chave pública de notificações.");
+        const { publicKey } = await keyRes.json();
+
+        if (!publicKey) {
+          console.warn("Chave pública de notificações não encontrada no servidor.");
+          return;
+        }
+
+        // 3. Solicitar permissão de notificação se necessário
+        let permission = Notification.permission;
+        if (permission === "default") {
+          permission = await Notification.requestPermission();
+        }
+
+        if (permission !== "granted") {
+          console.warn("Permissão de notificação negada pelo usuário.");
+          return;
+        }
+
+        // 4. Inscrever ou recuperar a inscrição ativa do usuário
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          const applicationServerKey = urlBase64ToUint8Array(publicKey);
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey
+          });
+        }
+
+        // 5. Enviar a inscrição ativa para o backend salvar no banco
+        await fetch("/api/notifications/subscribe", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            token,
+            subscription
+          })
+        });
+
+        console.log("Inscrição de notificações em segundo plano realizada!");
+      } catch (err) {
+        console.error("Erro ao configurar Web Push:", err);
+      }
+    };
+
+    configurePushNotifications();
+  }, [token, clientData?.isAdmin]);
 
   // Sincroniza e atualiza o backup local das tarefas do cliente sempre que houver mudanças
   useEffect(() => {
