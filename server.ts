@@ -2,7 +2,6 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
 
 const resolvedFilename = typeof __filename !== "undefined"
   ? __filename
@@ -469,9 +468,16 @@ app.delete("/api/tasks", (req, res) => {
 // VITE DEVELOPMENT MIDDLEWARE OR STATIC SERVER
 // ----------------------------------------------------
 async function startServer() {
+  if (process.env.VERCEL) {
+    // No Vercel, as rotas estáticas são servidas diretamente pela infraestrutura da CDN do Vercel.
+    // O Serverless Function do Express só é acionado para requisições de API (/api/*).
+    return;
+  }
+
   const PORT = 3000;
 
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
