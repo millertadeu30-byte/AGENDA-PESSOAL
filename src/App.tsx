@@ -440,7 +440,21 @@ export default function App() {
         safeStorage.setItem("taskControlProUserName", data.nome);
       }
     } catch (err: any) {
-      showToast(err.message || "Erro de conexão", true);
+      showToast("Erro de conexão com o servidor. Exibindo dados locais offline.", true);
+      const localTasksRaw = safeStorage.getItem("taskControlProTasksBackup");
+      if (localTasksRaw) {
+        try {
+          const localTasks = JSON.parse(localTasksRaw);
+          setClientData({
+            pendentes: localTasks,
+            historico: [],
+            aviso: false,
+            diasRestantes: 30,
+            nome: nomeUsuario || "Usuário",
+            status: "Ativo"
+          });
+        } catch (_) {}
+      }
     } finally {
       setGlobalLoading(false);
     }

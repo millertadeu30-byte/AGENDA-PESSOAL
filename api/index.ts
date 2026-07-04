@@ -1,22 +1,13 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
-const resolvedFilename = typeof __filename !== "undefined"
-  ? __filename
-  : (typeof import.meta !== "undefined" && import.meta.url ? fileURLToPath(import.meta.url) : "");
-
-const resolvedDirname = typeof __dirname !== "undefined"
-  ? __dirname
-  : (resolvedFilename ? path.dirname(resolvedFilename) : process.cwd());
 
 // No Vercel, o sistema de arquivos é read-only exceto pela pasta /tmp.
 // Usamos /tmp/database.json no Vercel para permitir escritas rápidas,
 // e o mecanismo de Auto-Healing do frontend recupera as tarefas do localStorage do cliente caso o Vercel recicle a função serverless.
 const DB_FILE = process.env.VERCEL
   ? "/tmp/database.json"
-  : path.join(resolvedDirname, "..", "database.json");
+  : path.join(process.cwd(), "database.json");
 
 // Estrutura do nosso banco de dados persistente em JSON
 interface Cliente {
@@ -206,8 +197,11 @@ function obterDadosCliente(token: string) {
 const app = express();
 app.use(express.json());
 
+// Cria um Router para encapsular todos os endpoints e suportar qualquer variação de prefixo no Vercel
+const router = express.Router();
+
 // Rota de registro de conta
-app.post("/api/auth/register", (req, res) => {
+router.post("/auth/register", (req, res) => {
   const { nome, email, senha } = req.body;
   if (!nome || !email || !senha) {
     return res.status(400).json({ erro: "Preencha todos os campos!" });
@@ -240,7 +234,7 @@ app.post("/api/auth/register", (req, res) => {
 });
 
 // Rota de Login
-app.post("/api/auth/login", (req, res) => {
+router.post("/auth/login", (req, res) => {
   const { email, senha } = req.body;
   if (!email || !senha) {
     return res.status(400).json({ erro: "Preencha e-mail e senha!" });
@@ -261,7 +255,7 @@ app.post("/api/auth/login", (req, res) => {
 });
 
 // Rotas Administrativas para controle de clientes
-app.get("/api/admin/clients/:adminToken", (req, res) => {
+router.get("/admin/clients/:adminToken", (req, res) => {
   const { adminToken } = req.params;
   if (adminToken !== "ADMIN_TOKEN_998877") {
     return res.status(403).json({ erro: "Acesso negado!" });
@@ -292,7 +286,7 @@ app.get("/api/admin/clients/:adminToken", (req, res) => {
   res.json({ clientes: clientsWithInfo });
 });
 
-app.post("/api/admin/clients/update", (req, res) => {
+router.post("/admin/clients/update", (req, res) => {
   const { adminToken, clientToken, status, vencimento } = req.body;
   if (adminToken !== "ADMIN_TOKEN_998877") {
     return res.status(403).json({ erro: "Acesso negado!" });
@@ -308,7 +302,7 @@ app.post("/api/admin/clients/update", (req, res) => {
   res.json({ sucesso: true });
 });
 
-app.delete("/api/admin/clients/:adminToken/:clientToken", (req, res) => {
+router.delete("/admin/clients/:adminToken/:clientToken", (req, res) => {
   const { adminToken, clientToken } = req.params;
   if (adminToken !== "ADMIN_TOKEN_998877") {
     return res.status(403).json({ erro: "Acesso negado!" });
@@ -328,7 +322,7 @@ app.delete("/api/admin/clients/:adminToken/:clientToken", (req, res) => {
 });
 
 // Obter dados gerais do cliente logado
-app.get("/api/client/:token", (req, res) => {
+router.get("/client/:token", (req, res) => {
   const { token } = req.params;
   if (token === "ADMIN_TOKEN_998877") {
     return res.json({ isAdmin: true, nome: "Administrador" });
@@ -338,7 +332,7 @@ app.get("/api/client/:token", (req, res) => {
 });
 
 // Criar nova tarefa
-app.post("/api/tasks", (req, res) => {
+router.post("/tasks", (req, res) => {
   const { token, tarefa, data, horario, recorrencia } = req.body;
   if (!token || !tarefa || !data) {
     return res.status(400).json({ erro: "Dados insuficientes para criar a tarefa." });
@@ -367,7 +361,7 @@ app.post("/api/tasks", (req, res) => {
 });
 
 // Concluir ou avançar recorrência de tarefa
-app.post("/api/tasks/conclude", (req, res) => {
+router.post("/tasks/conclude", (req, res) => {
   const { token, idTarefa } = req.body;
   if (!token || !idTarefa) {
     return res.status(400).json({ erro: "Dados insuficientes para concluir a tarefa." });
@@ -404,7 +398,7 @@ app.post("/api/tasks/conclude", (req, res) => {
 });
 
 // Editar Tarefa
-app.put("/api/tasks", (req, res) => {
+router.put("/tasks", (req, res) => {
   const { token, idTarefa, tarefa, data, horario, recorrencia } = req.body;
   if (!token || !idTarefa || !tarefa || !data) {
     return res.status(400).json({ erro: "Dados insuficientes para editar a tarefa." });
@@ -429,7 +423,7 @@ app.put("/api/tasks", (req, res) => {
 });
 
 // Deletar Tarefa
-app.delete("/api/tasks", (req, res) => {
+router.delete("/tasks", (req, res) => {
   const { token, idTarefa } = req.body;
   if (!token || !idTarefa) {
     return res.status(400).json({ erro: "Dados insuficientes para excluir a tarefa." });
@@ -453,6 +447,18 @@ app.delete("/api/tasks", (req, res) => {
   writeDB(db);
 
   res.json(obterDadosCliente(token));
+});
+
+// Vincula o router em ambas as rotas /api e / para prevenir diferenças de prefixos no Vercel
+app.use("/api", router);
+app.use("/", router);
+
+// Tratamento de Erros Global para retornar sempre JSON e evitar travamentos no client
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("[Global Error Handler]", err);
+  res.status(err.status || 500).json({
+    erro: "Erro no servidor: " + (err.message || String(err))
+  });
 });
 
 export default app;
