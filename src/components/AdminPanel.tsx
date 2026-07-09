@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Users,
   Unlock,
@@ -12,8 +12,23 @@ import {
   ShieldCheck,
   AlertTriangle,
   Sparkles,
-  ArrowRight
+  Plus,
+  Key,
+  X,
+  Copy,
+  Check
 } from "lucide-react";
+import { db } from "../firebase";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  query,
+  where,
+  writeBatch
+} from "firebase/firestore";
 
 interface AdminPanelProps {
   token: string;
@@ -25,7 +40,6 @@ interface AdminPanelProps {
 interface AdminClient {
   token: string;
   nome: string;
-  email: string;
   vencimento: string;
   status: string;
   diasRestantes: number;
@@ -42,6 +56,30 @@ export default function AdminPanel({
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [deletingClientToken, setDeletingClientToken] = useState<string | null>(null);
 
+  // Form states for creating a new account
+  const [isNewKeyModalOpen, setIsNewKeyModalOpen] = useState(false);
+  const [newNome, setNewNome] = useState("");
+  const [newChave, setNewChave] = useState("");
+  const [newStatus, setNewStatus] = useState("Ativo");
+  const [newVencimento, setNewVencimento] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30); // 30 dias de teste por padrão
+    return d.toISOString().split("T")[0];
+  });
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Auto generate a random 4-digit key
+  const handleGenerateKeySuggestion = () => {
+    const randomNum = Math.floor(1000 + Math.random() * 9000).toString();
+    setNewChave(randomNum);
+  };
+
+  useEffect(() => {
+    if (isNewKeyModalOpen && !newChave) {
+      handleGenerateKeySuggestion();
+    }
+  }, [isNewKeyModalOpen]);
+
   useEffect(() => {
     fetchClients();
   }, [refreshTrigger]);
@@ -49,12 +87,79 @@ export default function AdminPanel({
   const fetchClients = async () => {
     setGlobalLoading(true);
     try {
-      const res = await fetch(`/api/admin/clients/${token}`);
-      if (!res.ok) throw new Error("Acesso negado ou erro no servidor");
-      const data = await res.json();
-      setClients(data.clientes || []);
+      const querySnapshot = await getDocs(collection(db, "clientes"));
+      const list: AdminClient[] = [];
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (docSnap.id === "8619") return; // Ignora o próprio admin da contagem de clientes comuns
+
+        let diasRestantes = 0;
+        let statusCalculado = data.status || "Ativo";
+
+        if (statusCalculado !== "Pago" && statusCalculado !== "Vitalício" && data.vencimento) {
+          const dataVencimento = new Date(data.vencimento + "T23:59:59");
+          if (!isNaN(dataVencimento.getTime())) {
+            const diffTime = dataVencimento.getTime() - hoje.getTime();
+            diasRestantes = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diasRestantes < 0) {
+              statusCalculado = "Inadimplente";
+            }
+          }
+        }
+
+        list.push({
+          token: docSnap.id,
+          nome: data.nome || "Usuário sem nome",
+          vencimento: data.vencimento || "",
+          status: statusCalculado,
+          diasRestantes
+        });
+      });
+
+      // Ordenar por nome
+      list.sort((a, b) => a.nome.localeCompare(b.nome));
+      setClients(list);
     } catch (err: any) {
-      showToast(err.message || "Erro ao carregar clientes", true);
+      showToast("Erro ao conectar ao Firestore: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleCreateClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNome.trim()) return showToast("Por favor, digite o nome do usuário.", true);
+    if (!newChave.trim()) return showToast("Por favor, informe a chave de acesso.", true);
+
+    setGlobalLoading(true);
+    try {
+      const cleanKey = newChave.trim();
+      const clientDocRef = doc(db, "clientes", cleanKey);
+      
+      await setDoc(clientDocRef, {
+        nome: newNome.trim(),
+        vencimento: newVencimento,
+        status: newStatus,
+        createdAt: Date.now()
+      });
+
+      showToast(`Chave "${cleanKey}" para ${newNome} criada com sucesso!`);
+      setIsNewKeyModalOpen(false);
+      
+      // Reset form
+      setNewNome("");
+      setNewChave("");
+      setNewStatus("Ativo");
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      setNewVencimento(d.toISOString().split("T")[0]);
+
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao salvar no Firestore: " + err.message, true);
     } finally {
       setGlobalLoading(false);
     }
@@ -63,30 +168,20 @@ export default function AdminPanel({
   const handleUpdateStatus = async (clientToken: string, status: string, extendDays = 0) => {
     setGlobalLoading(true);
     try {
-      let vencimento: string | undefined = undefined;
-      
+      const clientDocRef = doc(db, "clientes", clientToken);
+      const updateData: any = { status };
+
       if (extendDays > 0) {
         const newDate = new Date();
         newDate.setDate(newDate.getDate() + extendDays);
-        vencimento = newDate.toISOString().split("T")[0];
+        updateData.vencimento = newDate.toISOString().split("T")[0];
       }
 
-      const res = await fetch("/api/admin/clients/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          adminToken: token,
-          clientToken,
-          status,
-          vencimento
-        })
-      });
-
-      if (!res.ok) throw new Error("Erro ao atualizar cliente");
+      await setDoc(clientDocRef, updateData, { merge: true });
       showToast(extendDays > 0 ? "Acesso estendido por mais 30 dias!" : `Status atualizado para: ${status}!`);
       setRefreshTrigger(prev => prev + 1);
     } catch (err: any) {
-      showToast(err.message || "Falha na atualização", true);
+      showToast("Falha na atualização: " + err.message, true);
     } finally {
       setGlobalLoading(false);
     }
@@ -95,30 +190,47 @@ export default function AdminPanel({
   const handleDeleteClient = async (clientToken: string) => {
     setGlobalLoading(true);
     try {
-      const res = await fetch(`/api/admin/clients/${token}/${clientToken}`, {
-        method: "DELETE"
-      });
-      if (!res.ok) throw new Error("Erro ao excluir cliente");
-      showToast("Cliente removido definitivamente!");
+      // 1. Deleta o documento do cliente do Firestore
+      await deleteDoc(doc(db, "clientes", clientToken));
+
+      // 2. Deleta todas as tarefas associadas a esse cliente via lote (Batch)
+      const q = query(collection(db, "tarefas"), where("token", "==", clientToken));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const batch = writeBatch(db);
+        querySnapshot.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+        await batch.commit();
+      }
+
+      showToast("Conta e tarefas associadas removidas definitivamente!");
       setRefreshTrigger(prev => prev + 1);
     } catch (err: any) {
-      showToast(err.message || "Falha ao excluir", true);
+      showToast("Falha ao excluir: " + err.message, true);
     } finally {
       setGlobalLoading(false);
       setDeletingClientToken(null);
     }
   };
 
-  // Metrics calculations
+  const copyToClipboard = (txt: string) => {
+    navigator.clipboard.writeText(txt);
+    setCopiedKey(txt);
+    showToast("Chave copiada para a área de transferência!");
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  // Metricas
   const totalUsers = clients.length;
   const vitalicioUsers = clients.filter(c => c.status === "Vitalício" || c.status === "Pago").length;
   const activeTrials = clients.filter(c => c.status === "Ativo" && c.diasRestantes >= 0).length;
   const expiredUsers = clients.filter(c => c.status === "Inadimplente" || (c.status === "Ativo" && c.diasRestantes < 0)).length;
 
-  // Filter clients list
-  const filteredClients = clients.filter(c => 
+  const filteredClients = clients.filter(c =>
     c.nome.toLowerCase().includes(search.toLowerCase()) ||
-    c.email.toLowerCase().includes(search.toLowerCase())
+    c.token.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -127,36 +239,44 @@ export default function AdminPanel({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="bg-rose-500/10 text-rose-400 text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-0.5 border border-rose-500/20 rounded-full flex items-center gap-1.5 animate-pulse">
-              <ShieldCheck className="w-3.5 h-3.5" /> Painel de Controle Admin
+            <span className="bg-rose-500/10 text-rose-400 text-[10px] font-mono font-bold uppercase tracking-widest px-2.5 py-0.5 border border-rose-500/20 rounded-full flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5" /> GERENCIAMENTO DE CONTAS
             </span>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-rose-400 via-pink-400 to-indigo-400 bg-clip-text text-transparent tracking-tight font-sans">
-            Gerenciador TaskControl
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent tracking-tight font-sans">
+            Painel do Administrador
           </h1>
         </div>
 
-        <button
-          onClick={handleLogout}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 hover:border-rose-500/30 hover:bg-slate-900/80 text-rose-400 hover:text-rose-300 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" />
-          Sair do Console
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsNewKeyModalOpen(true)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-600/20 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Nova Chave de Acesso
+          </button>
+
+          <button
+            onClick={handleLogout}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 hover:border-rose-500/30 hover:bg-slate-900/80 text-rose-400 hover:text-rose-300 text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            Sair
+          </button>
+        </div>
       </div>
 
       {/* Metrics Bento-Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Metric 1 */}
         <div className="bg-slate-900/40 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Total Usuários</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Total Contas</span>
             <Users className="w-4 h-4 text-indigo-400" />
           </div>
           <span className="text-3xl font-bold text-slate-100">{totalUsers}</span>
         </div>
 
-        {/* Metric 2 */}
         <div className="bg-emerald-950/10 border border-emerald-500/10 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Acesso Vitalício</span>
@@ -165,16 +285,14 @@ export default function AdminPanel({
           <span className="text-3xl font-bold text-emerald-300">{vitalicioUsers}</span>
         </div>
 
-        {/* Metric 3 */}
         <div className="bg-sky-950/10 border border-sky-500/10 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-sky-400">Testando Grátis</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-sky-400">Período de Teste</span>
             <Clock className="w-4 h-4 text-sky-400" />
           </div>
           <span className="text-3xl font-bold text-sky-300">{activeTrials}</span>
         </div>
 
-        {/* Metric 4 */}
         <div className="bg-rose-950/15 border border-rose-500/15 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">Bloqueados/Expirados</span>
@@ -186,14 +304,14 @@ export default function AdminPanel({
 
       {/* Control Area */}
       <div className="flex flex-col sm:flex-row items-center gap-3 justify-between">
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-80">
           <Search className="absolute left-4 top-3.5 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por nome ou e-mail..."
+            placeholder="Buscar por nome ou chave de acesso..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-[#1E293B]/60 border border-slate-700/85 py-2.5 pl-11 pr-4 text-slate-100 text-xs font-sans tracking-wide outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 rounded-xl"
+            className="w-full bg-[#1E293B]/60 border border-slate-700/85 py-2.5 pl-11 pr-4 text-slate-100 text-xs font-sans tracking-wide outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 rounded-xl"
           />
         </div>
 
@@ -211,15 +329,15 @@ export default function AdminPanel({
           filteredClients.map((c) => {
             const isPayer = c.status === "Vitalício" || c.status === "Pago";
             const isBlocked = c.status === "Inadimplente" || (!isPayer && c.diasRestantes < 0);
-            
+
             return (
               <motion.div
                 key={c.token}
                 className={`p-5 rounded-2xl border transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
                   isPayer
-                    ? "bg-emerald-950/10 border-emerald-500/20 shadow-[0_4px_16px_rgba(16,185,129,0.03)]"
+                    ? "bg-emerald-950/10 border-emerald-500/20"
                     : isBlocked
-                    ? "bg-rose-950/15 border-rose-500/20 shadow-[0_4px_16px_rgba(244,63,94,0.03)]"
+                    ? "bg-rose-950/15 border-rose-500/20"
                     : "bg-slate-900/40 border-slate-800/80"
                 }`}
               >
@@ -227,12 +345,22 @@ export default function AdminPanel({
                 <div className="flex-grow min-w-0">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="text-base font-semibold text-slate-100">{c.nome}</span>
-                    <span className="text-xs text-slate-400 font-mono">({c.email})</span>
                     
+                    {/* Copyable Access Key */}
+                    <button
+                      onClick={() => copyToClipboard(c.token)}
+                      className="inline-flex items-center gap-1.5 bg-slate-950 px-2 py-1 border border-slate-800 hover:border-indigo-500 hover:bg-slate-900 rounded-lg text-[10px] font-mono text-indigo-300 transition-all cursor-pointer"
+                      title="Clique para copiar a chave de acesso"
+                    >
+                      <Key className="w-3 h-3 text-indigo-400" />
+                      Chave: <span className="font-bold text-slate-200">{c.token}</span>
+                      {copiedKey === c.token ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-60" />}
+                    </button>
+
                     {/* Status badges */}
                     {isPayer ? (
                       <span className="bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full">
-                        ⭐ Vitalício (Pago)
+                        ⭐ Vitalício
                       </span>
                     ) : isBlocked ? (
                       <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full animate-pulse">
@@ -240,7 +368,7 @@ export default function AdminPanel({
                       </span>
                     ) : (
                       <span className="bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full">
-                        ⏳ Período de Teste
+                        ⏳ Período de Teste ({c.status})
                       </span>
                     )}
                   </div>
@@ -249,12 +377,12 @@ export default function AdminPanel({
                   <div className="flex items-center gap-4 mt-2 text-xs font-mono text-slate-400">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                      Validade: {c.vencimento ? c.vencimento.split("-").reverse().join("/") : "Sem prazo"}
+                      Vencimento: {c.vencimento ? c.vencimento.split("-").reverse().join("/") : "Sem prazo"}
                     </span>
                     {!isPayer && (
                       <span className={`font-semibold ${isBlocked ? "text-rose-400" : "text-sky-300"}`}>
-                        {isBlocked 
-                          ? `Expirou há ${Math.abs(c.diasRestantes)} dia(s)` 
+                        {isBlocked
+                          ? `Expirou há ${Math.abs(c.diasRestantes)} dia(s)`
                           : `${c.diasRestantes} dia(s) restante(s)`
                         }
                       </span>
@@ -269,10 +397,10 @@ export default function AdminPanel({
                       {/* Action 1: Activate/Release Vitalício */}
                       <button
                         onClick={() => handleUpdateStatus(c.token, "Vitalício")}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-emerald-600/10"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg"
                         title="Liberar acesso vitalício permanente para o usuário"
                       >
-                        <Unlock className="w-3.5 h-3.5" /> Liberar Acesso (R$ 14,99)
+                        <Unlock className="w-3.5 h-3.5" /> Liberar Vitalício
                       </button>
 
                       {/* Action 2: Extend +30 Days Trial */}
@@ -317,7 +445,7 @@ export default function AdminPanel({
                     <button
                       onClick={() => setDeletingClientToken(c.token)}
                       className="w-9 h-9 border border-rose-500/25 text-rose-400 hover:bg-rose-600 hover:text-white flex items-center justify-center rounded-xl transition-all cursor-pointer"
-                      title="Excluir Conta Permanentemente"
+                      title="Excluir Conta e todas as suas tarefas permanentemente"
                     >
                       <Trash className="w-4 h-4" />
                     </button>
@@ -328,10 +456,115 @@ export default function AdminPanel({
           })
         ) : (
           <div className="py-12 text-center text-sm text-slate-400 bg-slate-900/20 rounded-2xl border border-dashed border-slate-800/80">
-            Nenhum cliente cadastrado ou encontrado na busca.
+            Nenhuma conta cadastrada ou encontrada na busca.
           </div>
         )}
       </div>
+
+      {/* CREATE ACCOUNT / KEY MODAL */}
+      <AnimatePresence>
+        {isNewKeyModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-slate-900 border border-slate-800 w-full max-w-md p-6 rounded-3xl shadow-2xl relative overflow-hidden"
+            >
+              <button
+                onClick={() => setIsNewKeyModalOpen(false)}
+                className="absolute right-4 top-4 text-slate-400 hover:text-slate-100 p-1 hover:bg-slate-800 rounded-xl transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-2.5 mb-4 pb-2 border-b border-slate-800">
+                <Key className="w-5 h-5 text-indigo-400 animate-bounce" />
+                <h3 className="text-lg font-bold text-slate-100 font-sans">
+                  Criar Nova Chave de Acesso
+                </h3>
+              </div>
+
+              <form onSubmit={handleCreateClient} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                    Nome do Usuário
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: João da Silva"
+                    value={newNome}
+                    onChange={(e) => setNewNome(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 px-4 py-2.5 text-slate-100 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-sans"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                    <span>Chave de Acesso (Senha)</span>
+                    <button
+                      type="button"
+                      onClick={handleGenerateKeySuggestion}
+                      className="text-indigo-400 hover:text-indigo-300 text-[10px] font-bold tracking-wide uppercase transition-all"
+                    >
+                      Sugerir Chave Aleatória
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: 5821"
+                    value={newChave}
+                    onChange={(e) => setNewChave(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 px-4 py-2.5 text-slate-100 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono tracking-widest font-bold"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Status Inicial
+                    </label>
+                    <select
+                      value={newStatus}
+                      onChange={(e) => setNewStatus(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 px-3 py-2.5 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-sans"
+                    >
+                      <option value="Ativo">Ativo (Período Teste)</option>
+                      <option value="Pago">Pago</option>
+                      <option value="Vitalício">Vitalício</option>
+                      <option value="Inadimplente">Bloqueado</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Vencimento
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={newVencimento}
+                      onChange={(e) => setNewVencimento(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 px-3 py-2.5 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold uppercase tracking-wider text-xs rounded-xl transition-all shadow-lg"
+                  >
+                    <Plus className="w-4 h-4" /> Criar Chave de Acesso
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

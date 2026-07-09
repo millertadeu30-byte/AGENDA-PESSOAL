@@ -6,3 +6,20 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --font-serif: "Lora", Georgia, Cambria, "Times New Roman", Times, serif;
 }
+
+@utility animate-blink-red {
+  animation: blink-red 1.5s infinite ease-in-out;
+}
+
+@keyframes blink-red {
+  0%, 100% {
+    border-color: rgba(239, 68, 68, 0.85);
+    box-shadow: 0 0 18px rgba(239, 68, 68, 0.35);
+    background-color: rgba(244, 63, 94, 0.12);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.25);
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.05);
+    background-color: rgba(244, 63, 94, 0.03);
+  }
+}
