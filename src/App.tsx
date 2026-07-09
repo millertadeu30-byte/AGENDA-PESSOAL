@@ -1149,13 +1149,34 @@ export default function App() {
 
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Qual horário?</label>
-                        <input
-                          id="input-task-time"
-                          type="time"
-                          value={taskTime}
-                          onChange={(e) => setTaskTime(e.target.value)}
-                          className="w-full bg-slate-950/60 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                        />
+                        {(() => {
+                          const [taskHour, taskMin] = (taskTime || "12:00").split(":");
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={taskHour || "12"}
+                                onChange={(e) => setTaskTime(`${e.target.value}:${taskMin || "00"}`)}
+                                className="w-1/2 bg-slate-950/60 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-center cursor-pointer"
+                              >
+                                {Array.from({ length: 24 }).map((_, i) => {
+                                  const val = String(i).padStart(2, "0");
+                                  return <option key={val} value={val} className="bg-slate-950 text-slate-200">{val} h</option>;
+                                })}
+                              </select>
+                              <span className="text-slate-400 font-bold">:</span>
+                              <select
+                                value={taskMin || "00"}
+                                onChange={(e) => setTaskTime(`${taskHour || "12"}:${e.target.value}`)}
+                                className="w-1/2 bg-slate-950/60 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-center cursor-pointer"
+                              >
+                                {Array.from({ length: 60 }).map((_, i) => {
+                                  const val = String(i).padStart(2, "0");
+                                  return <option key={val} value={val} className="bg-slate-950 text-slate-200">{val} m</option>;
+                                })}
+                              </select>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div className="flex flex-col gap-1.5">
@@ -1445,12 +1466,34 @@ export default function App() {
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Horário</label>
-                    <input
-                      type="time"
-                      value={editTime}
-                      onChange={(e) => setEditTime(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
+                    {(() => {
+                      const [editHour, editMin] = (editTime || "12:00").split(":");
+                      return (
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={editHour || "12"}
+                            onChange={(e) => setEditTime(`${e.target.value}:${editMin || "00"}`)}
+                            className="w-1/2 bg-slate-950 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-center cursor-pointer"
+                          >
+                            {Array.from({ length: 24 }).map((_, i) => {
+                              const val = String(i).padStart(2, "0");
+                              return <option key={val} value={val} className="bg-slate-950 text-slate-200">{val} h</option>;
+                            })}
+                          </select>
+                          <span className="text-slate-400 font-bold">:</span>
+                          <select
+                            value={editMin || "00"}
+                            onChange={(e) => setEditTime(`${editHour || "12"}:${e.target.value}`)}
+                            className="w-1/2 bg-slate-950 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-center cursor-pointer"
+                          >
+                            {Array.from({ length: 60 }).map((_, i) => {
+                              const val = String(i).padStart(2, "0");
+                              return <option key={val} value={val} className="bg-slate-950 text-slate-200">{val} m</option>;
+                            })}
+                          </select>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
