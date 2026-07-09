@@ -21,7 +21,9 @@ import {
   Mic,
   Volume2,
   VolumeX,
-  Sparkles
+  Sparkles,
+  Minimize2,
+  Maximize2
 } from "lucide-react";
 import { Tarefa, ClientData } from "./types";
 import AdminPanel from "./components/AdminPanel";
@@ -80,6 +82,7 @@ export default function App() {
   // Login input state
   const [loginPasscode, setLoginPasscode] = useState("");
   const [showSalesBlock, setShowSalesBlock] = useState(false);
+  const [avisoState, setAvisoState] = useState<"visible" | "minimized" | "hidden">("visible");
 
   // WhatsApp Configuração Dinâmica
   const [whatsappNumber, setWhatsappNumber] = useState("5531988888888");
@@ -536,7 +539,17 @@ export default function App() {
       });
 
       setClientData(prev => {
-        if (!prev) return null;
+        if (!prev) {
+          return {
+            nome: "Usuário",
+            status: "Ativo",
+            vencimento: "",
+            diasRestantes: 0,
+            aviso: false,
+            pendentes,
+            historico
+          };
+        }
         return {
           ...prev,
           pendentes,
@@ -694,6 +707,7 @@ export default function App() {
           setToken(cleanPass);
           setNomeUsuario(data.nome || "Usuário");
           setShowSalesBlock(false);
+          setAvisoState("visible");
 
           if (statusCalculado === "Inadimplente") {
             showToast(`Acesso restrito! Seu período de teste expirou.`, true);
@@ -722,6 +736,7 @@ export default function App() {
     setClientData(null);
     setLoginPasscode("");
     setShowSalesBlock(false);
+    setAvisoState("visible");
     showToast("Sessão finalizada!");
   };
 
@@ -1207,32 +1222,87 @@ export default function App() {
             
             {/* ALERT BOX EXPIRE ADVISORY WARNING */}
             <AnimatePresence>
-              {clientData && clientData.aviso && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="bg-indigo-950/15 border border-indigo-500/30 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4"
-                >
-                  <div className="flex items-start gap-3.5">
-                    <AlertTriangle className="w-5.5 h-5.5 text-indigo-400 mt-0.5 flex-shrink-0 animate-bounce" />
-                    <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wide text-indigo-300 font-sans">Período de Teste Quase Expirando</h4>
-                      <p className="text-xs text-indigo-200/90 mt-1 leading-relaxed">
-                        Sua chave de teste terminará em <strong>{clientData.diasRestantes} dia(s)</strong> (Vence em {formatDateString(clientData.vencimento)}).
-                        Garanta seu <strong>Acesso Vitalício Permanente por apenas R$ 4,99</strong>!
-                      </p>
-                    </div>
-                  </div>
-                  <a
-                    href={`https://wa.me/${whatsappNumber}?text=Ol%C3%A1%21+Meu+per%C3%ADodo+de+teste+est%C3%A1+acabando+e+gostaria+de+adquirir+o+Acesso+Vital%C3%ADcio+da+minha+Agenda+Pessoal+por+R%24+4%2C99.+Chave%3A+${token}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-shrink-0 inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider py-2.5 px-4 rounded-xl transition-all shadow-md shadow-emerald-950/30 cursor-pointer"
+              {clientData && clientData.aviso && avisoState !== "hidden" && (
+                avisoState === "minimized" ? (
+                  <motion.div
+                    key="minimized-alert"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-indigo-950/20 border border-indigo-500/20 p-2 px-3.5 rounded-xl flex items-center justify-between gap-3 text-xs text-indigo-300 font-mono shadow-md shadow-indigo-950/25"
                   >
-                    Ativar Vitalício no WhatsApp
-                  </a>
-                </motion.div>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-indigo-400 animate-pulse" />
+                      <span>Seu teste termina em <strong className="text-indigo-200">{clientData.diasRestantes} dia(s)</strong> (Vence em {formatDateString(clientData.vencimento)})</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setAvisoState("visible")}
+                        className="px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-indigo-100 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+                        title="Expandir aviso completo"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" /> Ver Detalhes
+                      </button>
+                      <button
+                        onClick={() => setAvisoState("hidden")}
+                        className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-rose-400 transition-all cursor-pointer"
+                        title="Ocultar aviso"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="expanded-alert"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="bg-indigo-950/25 border border-indigo-500/40 p-4 sm:p-5 rounded-2xl relative overflow-hidden shadow-xl"
+                  >
+                    {/* Absolute control buttons inside full panel */}
+                    <div className="absolute top-4 right-4 flex items-center gap-1.5">
+                      <button
+                        onClick={() => setAvisoState("minimized")}
+                        className="p-1.5 bg-slate-900/40 hover:bg-indigo-500/10 border border-slate-800 hover:border-indigo-500/20 rounded-xl text-indigo-400 hover:text-indigo-200 transition-all cursor-pointer"
+                        title="Diminuir aviso"
+                      >
+                        <Minimize2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setAvisoState("hidden")}
+                        className="p-1.5 bg-slate-900/40 hover:bg-indigo-500/10 border border-slate-800 hover:border-indigo-500/20 rounded-xl text-slate-400 hover:text-rose-400 transition-all cursor-pointer"
+                        title="Sumir / Ocultar aviso"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 pr-14 md:pr-16">
+                      <div className="flex items-start gap-3.5">
+                        <AlertTriangle className="w-6 h-6 text-indigo-400 mt-1 flex-shrink-0 animate-bounce" />
+                        <div>
+                          <h4 className="text-sm font-extrabold uppercase tracking-wider text-indigo-300 font-sans">
+                            Período de Teste Quase Expirando!
+                          </h4>
+                          <p className="text-xs text-indigo-100/90 mt-1.5 leading-relaxed max-w-2xl">
+                            Sua chave de acesso temporária expirará em <strong className="text-indigo-300 text-sm">{clientData.diasRestantes} dia(s)</strong> (Vence em {formatDateString(clientData.vencimento)}).
+                            Adquira seu <strong className="text-emerald-400">Acesso Vitalício Permanente por apenas R$ 4,99 (Taxa Única)</strong> para <strong className="text-indigo-300">evitar o bloqueio da sua agenda</strong> e continuar organizando suas tarefas perfeitamente, sem correr o risco de ter a conta suspensa ou ter que começar tudo de novo!
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <a
+                        href={`https://wa.me/${whatsappNumber}?text=Ol%C3%A1%21+Meu+per%C3%ADodo+de+teste+est%C3%A1+acabando+e+gostaria+de+adquirir+o+Acesso+Vital%C3%ADcio+da+minha+Agenda+Pessoal+por+R%24+4%2C99.+Chave%3A+${token}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-shrink-0 inline-flex items-center justify-center gap-2 w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider py-3 px-5 rounded-xl transition-all shadow-md shadow-emerald-950/30 cursor-pointer"
+                      >
+                        Ativar Vitalício no WhatsApp
+                      </a>
+                    </div>
+                  </motion.div>
+                )
               )}
             </AnimatePresence>
 
@@ -1272,6 +1342,7 @@ export default function App() {
                           id="input-task-name"
                           type="text"
                           required
+                          autoComplete="off"
                           placeholder="Ex: Pagar mensalidade do servidor..."
                           value={taskName}
                           onChange={(e) => setTaskName(e.target.value)}
@@ -1591,6 +1662,7 @@ export default function App() {
                     <input
                       type="text"
                       required
+                      autoComplete="off"
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 p-3 pr-12 text-slate-100 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"

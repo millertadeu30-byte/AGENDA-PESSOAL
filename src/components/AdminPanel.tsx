@@ -235,6 +235,21 @@ export default function AdminPanel({
     }
   };
 
+  const handleUpdateVencimento = async (clientToken: string, newVencimento: string) => {
+    if (!newVencimento) return;
+    setGlobalLoading(true);
+    try {
+      const clientDocRef = doc(db, "clientes", clientToken);
+      await setDoc(clientDocRef, { vencimento: newVencimento }, { merge: true });
+      showToast("Vencimento atualizado com sucesso!");
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao atualizar vencimento: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
   const handleDeleteClient = async (clientToken: string) => {
     setGlobalLoading(true);
     try {
@@ -483,11 +498,18 @@ export default function AdminPanel({
                   </div>
 
                   {/* Expiration and time metrics */}
-                  <div className="flex items-center gap-4 mt-2 text-xs font-mono text-slate-400">
-                    <span className="flex items-center gap-1">
+                  <div className="flex items-center gap-4 mt-2 text-xs font-mono text-slate-400 flex-wrap">
+                    <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800/80 px-2.5 py-1 rounded-xl">
                       <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                      Vencimento: {c.vencimento ? c.vencimento.split("-").reverse().join("/") : "Sem prazo"}
-                    </span>
+                      <span className="text-slate-400 text-[11px]">Vencimento:</span>
+                      <input
+                        type="date"
+                        value={c.vencimento || ""}
+                        onChange={(e) => handleUpdateVencimento(c.token, e.target.value)}
+                        className="bg-transparent border-none text-indigo-300 font-bold outline-none cursor-pointer focus:text-indigo-200"
+                        title="Clique para alterar a data de vencimento manualmente"
+                      />
+                    </div>
                     {!isPayer && (
                       <span className={`font-semibold ${isBlocked ? "text-rose-400" : "text-sky-300"}`}>
                         {isBlocked
