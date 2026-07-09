@@ -20,7 +20,8 @@ import {
   CheckSquare,
   Mic,
   Volume2,
-  VolumeX
+  VolumeX,
+  Sparkles
 } from "lucide-react";
 import { Tarefa, ClientData } from "./types";
 import AdminPanel from "./components/AdminPanel";
@@ -78,6 +79,26 @@ export default function App() {
   
   // Login input state
   const [loginPasscode, setLoginPasscode] = useState("");
+  const [showSalesBlock, setShowSalesBlock] = useState(false);
+
+  // WhatsApp Configuração Dinâmica
+  const [whatsappNumber, setWhatsappNumber] = useState("5531988888888");
+  const [whatsappDisplay, setWhatsappDisplay] = useState("(31) 98888-8888");
+
+  // Carrega configuração dinâmica do WhatsApp para contato de vendas
+  useEffect(() => {
+    const configRef = doc(db, "config", "whatsapp");
+    const unsubscribe = onSnapshot(configRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.number) setWhatsappNumber(data.number);
+        if (data.display) setWhatsappDisplay(data.display);
+      }
+    }, (error) => {
+      console.warn("[WhatsApp] Erro ao obter config:", error);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // UI and Client states
   const [clientData, setClientData] = useState<ClientData | null>(null);
@@ -667,16 +688,20 @@ export default function App() {
             }
           }
 
+          // Se a chave existe, permitimos o login para que as regras de exibição mostrem a tela de bloqueio apropriada
+          safeStorage.setItem("taskControlProToken", cleanPass);
+          safeStorage.setItem("taskControlProUserName", data.nome || "Usuário");
+          setToken(cleanPass);
+          setNomeUsuario(data.nome || "Usuário");
+          setShowSalesBlock(false);
+
           if (statusCalculado === "Inadimplente") {
-            showToast(`Acesso bloqueado! Sua chave expirou em ${data.vencimento?.split("-").reverse().join("/")}.`, true);
+            showToast(`Acesso restrito! Seu período de teste expirou.`, true);
           } else {
-            safeStorage.setItem("taskControlProToken", cleanPass);
-            safeStorage.setItem("taskControlProUserName", data.nome || "Usuário");
-            setToken(cleanPass);
-            setNomeUsuario(data.nome || "Usuário");
             showToast(`Olá, ${data.nome || "Usuário"}! Bem-vindo.`);
           }
         } else {
+          setShowSalesBlock(true);
           showToast("Chave de acesso inválida ou não encontrada!", true);
         }
       }
@@ -696,6 +721,7 @@ export default function App() {
     setNomeUsuario("");
     setClientData(null);
     setLoginPasscode("");
+    setShowSalesBlock(false);
     showToast("Sessão finalizada!");
   };
 
@@ -991,11 +1017,35 @@ export default function App() {
                 >
                   ACESSAR AGENDA
                 </button>
-
-                <p className="text-center text-[10px] font-mono uppercase text-slate-500 mt-4 pt-2 border-t border-slate-800/50">
-                  Dúvidas ou Nova Chave: millertadeu30@gmail.com
-                </p>
               </form>
+
+              {showSalesBlock && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  className="mt-6 pt-5 border-t border-slate-800/60 flex flex-col gap-3"
+                >
+                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-2xl p-4 text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
+                    <div className="flex items-center justify-center gap-1.5 text-emerald-400 font-bold text-xs uppercase tracking-wider mb-1">
+                      <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                      <span>Adquirir Acesso à Agenda</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-relaxed mb-3">
+                      Sua chave está incorreta ou não foi encontrada? Adquira seu <strong className="text-emerald-400 font-extrabold text-sm">Acesso Vitalício</strong> por apenas <strong className="text-emerald-400 font-extrabold text-sm">R$ 4,99 (Taxa única)</strong>!
+                    </p>
+                    <a
+                      href={`https://wa.me/${whatsappNumber}?text=Ol%C3%A1%21+Não+consegui+acessar+com+a+minha+chave.+Gostaria+de+adquirir+ou+liberar+o+Acesso+Vital%C3%ADcio+da+minha+Agenda+Pessoal+por+R%24+4%2C99.`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-emerald-950/40 cursor-pointer"
+                    >
+                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+                      Adquirir pelo WhatsApp {whatsappDisplay}
+                    </a>
+                  </div>
+                </motion.div>
+              )}
             </div>
           </motion.div>
         ) : clientData?.isAdmin ? (
@@ -1012,6 +1062,79 @@ export default function App() {
               setGlobalLoading={setGlobalLoading}
             />
           </motion.div>
+        ) : clientData && clientData.status === "Inadimplente" ? (
+          /* EXPIRED USER BLOCKING VIEW */
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg mx-auto bg-slate-900/50 backdrop-blur-md border border-rose-500/20 p-6 sm:p-8 rounded-3xl shadow-2xl text-center relative overflow-hidden"
+          >
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />
+            
+            <div className="w-16 h-16 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4 animate-pulse">
+              <AlertTriangle className="w-8 h-8 text-rose-400" />
+            </div>
+
+            <h2 className="text-xl sm:text-2xl font-black text-slate-100 font-sans tracking-tight mb-2">
+              Seu Período de Teste Expirou!
+            </h2>
+            
+            <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto mb-6">
+              Para continuar agendando e organizando seus compromissos diários de forma simples e rápida, ative sua licença definitiva. É uma taxa única e vitalícia!
+            </p>
+
+            {/* BENEFÍCIOS CARD */}
+            <div className="bg-slate-950/50 border border-slate-800/80 rounded-2xl p-4 text-left space-y-3 mb-6 max-w-sm mx-auto">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 font-mono">
+                O que você recebe no Plano Vitalício:
+              </h3>
+              <ul className="space-y-2 text-xs text-slate-300">
+                <li className="flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>Acesso definitivo sem mensalidades ou taxas futuras</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>Sincronização na nuvem em tempo real (Firestore)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>Configuração de recorrências (diário, semanal, mensal)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <span>Alerta de avisos sonoros e lembretes integrados</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* PREÇO EM DESTAQUE */}
+            <div className="mb-6">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Pagamento Único</p>
+              <p className="text-3xl font-black text-emerald-400 mt-1">R$ 4,99</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Sem assinaturas, sem cobranças adicionais</p>
+            </div>
+
+            {/* ACTION BUTTONS */}
+            <div className="space-y-3 max-w-sm mx-auto">
+              <a
+                href={`https://wa.me/${whatsappNumber}?text=Ol%C3%A1%21+Meu+per%C3%ADodo+de+teste+expirou+e+gostaria+de+adquirir+o+Acesso+Vital%C3%ADcio+da+minha+Agenda+Pessoal+por+R%24+4%2C99.+Chave%3A+${token}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 text-xs uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-950/40 cursor-pointer"
+              >
+                <span className="w-2 h-2 bg-white rounded-full animate-ping" />
+                Liberar pelo WhatsApp {whatsappDisplay}
+              </a>
+
+              <button
+                onClick={handleLogout}
+                className="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 font-semibold py-2 px-4 text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Sair / Trocar Chave
+              </button>
+            </div>
+          </motion.div>
         ) : (
           /* STANDARD USER VIEW */
           <motion.div
@@ -1021,7 +1144,7 @@ export default function App() {
           >
             
             {/* PAINEL DE CONTROLE E STATUS (Painelzinho em cima) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-900/40 border border-slate-800/80 p-4 rounded-2xl shadow-lg">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-900/40 border border-slate-800/80 p-4 rounded-2xl shadow-lg">
               {/* Item 1: Status da Chave */}
               <div className="flex items-center gap-3 bg-slate-950/30 border border-slate-800/40 p-3 rounded-xl">
                 <div className="w-8 h-8 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -1035,7 +1158,32 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Item 2: Controle do Bip / Alarme Sonoro */}
+              {/* Item 2: Plano Atual */}
+              <div className="flex items-center gap-3 bg-slate-950/30 border border-slate-800/40 p-3 rounded-xl">
+                {clientData && (clientData.status === "Vitalício" || clientData.status === "Pago") ? (
+                  <>
+                    <div className="w-8 h-8 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Seu Plano</p>
+                      <p className="text-xs font-bold text-emerald-400">⭐ Vitalício (Ativo)</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-8 h-8 bg-sky-500/10 border border-sky-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <Clock className="w-4 h-4 text-sky-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Seu Plano</p>
+                      <p className="text-xs font-bold text-sky-300">Teste ({clientData?.diasRestantes ?? 0}d rest.)</p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Item 3: Controle do Bip / Alarme Sonoro */}
               <button
                 type="button"
                 onClick={toggleBeep}
@@ -1064,16 +1212,26 @@ export default function App() {
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: "auto" }}
                   exit={{ opacity: 0, height: 0 }}
-                  className="bg-indigo-950/20 border border-indigo-500/35 p-4 rounded-2xl flex items-start gap-3.5"
+                  className="bg-indigo-950/15 border border-indigo-500/30 p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4"
                 >
-                  <AlertTriangle className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0 animate-bounce" />
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wide text-indigo-300">Aviso Importante</h4>
-                    <p className="text-xs text-indigo-200/90 mt-1 leading-relaxed">
-                      Seu período de teste grátis terminará em <strong>{clientData.diasRestantes} dia(s)</strong> (Vence em {formatDateString(clientData.vencimento)}).
-                      Fale com o administrador para garantir seu acesso vitalício permanente.
-                    </p>
+                  <div className="flex items-start gap-3.5">
+                    <AlertTriangle className="w-5.5 h-5.5 text-indigo-400 mt-0.5 flex-shrink-0 animate-bounce" />
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wide text-indigo-300 font-sans">Período de Teste Quase Expirando</h4>
+                      <p className="text-xs text-indigo-200/90 mt-1 leading-relaxed">
+                        Sua chave de teste terminará em <strong>{clientData.diasRestantes} dia(s)</strong> (Vence em {formatDateString(clientData.vencimento)}).
+                        Garanta seu <strong>Acesso Vitalício Permanente por apenas R$ 4,99</strong>!
+                      </p>
+                    </div>
                   </div>
+                  <a
+                    href={`https://wa.me/${whatsappNumber}?text=Ol%C3%A1%21+Meu+per%C3%ADodo+de+teste+est%C3%A1+acabando+e+gostaria+de+adquirir+o+Acesso+Vital%C3%ADcio+da+minha+Agenda+Pessoal+por+R%24+4%2C99.+Chave%3A+${token}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider py-2.5 px-4 rounded-xl transition-all shadow-md shadow-emerald-950/30 cursor-pointer"
+                  >
+                    Ativar Vitalício no WhatsApp
+                  </a>
                 </motion.div>
               )}
             </AnimatePresence>

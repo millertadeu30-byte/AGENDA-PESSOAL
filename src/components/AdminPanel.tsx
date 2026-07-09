@@ -23,6 +23,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   deleteDoc,
   query,
@@ -67,6 +68,53 @@ export default function AdminPanel({
     return d.toISOString().split("T")[0];
   });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Configuração de Vendas WhatsApp
+  const [newWhatsappNumber, setNewWhatsappNumber] = useState("");
+  const [newWhatsappDisplay, setNewWhatsappDisplay] = useState("");
+  const [savingWhatsapp, setSavingWhatsapp] = useState(false);
+
+  // Busca configuração de WhatsApp salva
+  useEffect(() => {
+    const fetchWhatsappConfig = async () => {
+      try {
+        const configSnap = await getDoc(doc(db, "config", "whatsapp"));
+        if (configSnap.exists()) {
+          const data = configSnap.data();
+          if (data.number) setNewWhatsappNumber(data.number);
+          if (data.display) setNewWhatsappDisplay(data.display);
+        } else {
+          setNewWhatsappNumber("5531988888888");
+          setNewWhatsappDisplay("(31) 98888-8888");
+        }
+      } catch (err: any) {
+        console.warn("Erro ao obter config de whatsapp:", err);
+      }
+    };
+    fetchWhatsappConfig();
+  }, []);
+
+  const saveWhatsappConfig = async () => {
+    if (!newWhatsappNumber.trim()) {
+      return showToast("Por favor, digite o número do WhatsApp.", true);
+    }
+    if (!newWhatsappDisplay.trim()) {
+      return showToast("Por favor, digite a exibição visual do WhatsApp.", true);
+    }
+    setSavingWhatsapp(true);
+    try {
+      await setDoc(doc(db, "config", "whatsapp"), {
+        number: newWhatsappNumber.trim(),
+        display: newWhatsappDisplay.trim(),
+        updatedAt: new Date().toISOString()
+      });
+      showToast("Configuração do WhatsApp salva com sucesso!");
+    } catch (err: any) {
+      showToast("Erro ao salvar configuração: " + err.message, true);
+    } finally {
+      setSavingWhatsapp(false);
+    }
+  };
 
   // Auto generate a random 4-digit key
   const handleGenerateKeySuggestion = () => {
@@ -279,7 +327,7 @@ export default function AdminPanel({
 
         <div className="bg-emerald-950/10 border border-emerald-500/10 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Acesso Vitalício</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">Vitalício (R$ 4,99)</span>
             <Sparkles className="w-4 h-4 text-emerald-400" />
           </div>
           <span className="text-3xl font-bold text-emerald-300">{vitalicioUsers}</span>
@@ -287,7 +335,7 @@ export default function AdminPanel({
 
         <div className="bg-sky-950/10 border border-sky-500/10 p-4 rounded-2xl flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-sky-400">Período de Teste</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-sky-400">Teste Grátis</span>
             <Clock className="w-4 h-4 text-sky-400" />
           </div>
           <span className="text-3xl font-bold text-sky-300">{activeTrials}</span>
@@ -299,6 +347,67 @@ export default function AdminPanel({
             <AlertTriangle className="w-4 h-4 text-rose-400" />
           </div>
           <span className="text-3xl font-bold text-rose-300">{expiredUsers}</span>
+        </div>
+      </div>
+
+      {/* Configuração de Vendas WhatsApp */}
+      <div className="bg-slate-900/40 border border-slate-800/80 p-5 rounded-2xl space-y-4">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 font-mono">
+              Configuração do WhatsApp de Contato
+            </span>
+          </div>
+          <p className="text-xs text-slate-400">
+            Defina o número e a exibição visual do WhatsApp para os botões de contato e liberação de acesso (exibidos quando o período de teste do usuário expira).
+          </p>
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Número (Apenas números + DDD)
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: 5531988888888"
+              value={newWhatsappNumber}
+              onChange={(e) => setNewWhatsappNumber(e.target.value.replace(/\D/g, ""))}
+              className="w-full bg-[#1E293B]/60 border border-slate-700/85 py-2 px-3 text-slate-100 text-xs font-mono outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 rounded-xl"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Exibição Visual (Texto do Botão)
+            </label>
+            <input
+              type="text"
+              placeholder="Ex: (31) 98888-8888"
+              value={newWhatsappDisplay}
+              onChange={(e) => setNewWhatsappDisplay(e.target.value)}
+              className="w-full bg-[#1E293B]/60 border border-slate-700/85 py-2 px-3 text-slate-100 text-xs outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 rounded-xl"
+            />
+          </div>
+
+          <button
+            onClick={saveWhatsappConfig}
+            disabled={savingWhatsapp}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white font-bold py-2 px-4 text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-950/30 cursor-pointer h-9 flex items-center justify-center gap-1.5"
+          >
+            {savingWhatsapp ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                Salvando...
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                Salvar Configurações
+              </>
+            )}
+          </button>
         </div>
       </div>
 
@@ -360,7 +469,7 @@ export default function AdminPanel({
                     {/* Status badges */}
                     {isPayer ? (
                       <span className="bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full">
-                        ⭐ Vitalício
+                        ⭐ Vitalício (R$ 4,99)
                       </span>
                     ) : isBlocked ? (
                       <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full animate-pulse">
@@ -368,7 +477,7 @@ export default function AdminPanel({
                       </span>
                     ) : (
                       <span className="bg-blue-500/10 text-blue-300 border border-blue-500/20 text-[9px] font-bold uppercase px-2 py-0.5 rounded-full">
-                        ⏳ Período de Teste ({c.status})
+                        ⏳ Teste Grátis
                       </span>
                     )}
                   </div>
@@ -531,9 +640,8 @@ export default function AdminPanel({
                       onChange={(e) => setNewStatus(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 px-3 py-2.5 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-sans"
                     >
-                      <option value="Ativo">Ativo (Período Teste)</option>
-                      <option value="Pago">Pago</option>
-                      <option value="Vitalício">Vitalício</option>
+                      <option value="Ativo">Teste Grátis</option>
+                      <option value="Vitalício">Vitalício (R$ 4,99)</option>
                       <option value="Inadimplente">Bloqueado</option>
                     </select>
                   </div>
