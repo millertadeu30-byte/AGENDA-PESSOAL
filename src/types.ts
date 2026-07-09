@@ -18,4 +18,5 @@ export interface ClientData {
   status: string; // "Ativo" | "Pago" | "Vitalício" | "Inadimplente"
   expired?: boolean;
   isAdmin?: boolean;
+  fcmToken?: string;
 }

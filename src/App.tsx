@@ -24,7 +24,8 @@ import {
 } from "lucide-react";
 import { Tarefa, ClientData } from "./types";
 import AdminPanel from "./components/AdminPanel";
-import { db } from "./firebase";
+import { db, getMessagingInstance } from "./firebase";
+import { getToken } from "firebase/messaging";
 import {
   doc,
   getDoc,
@@ -105,6 +106,9 @@ export default function App() {
   const [toastIsError, setToastIsError] = useState(false);
   const toastTimeoutRef = useRef<any>(null);
 
+  // Referência para controlar o momento da última digitação/teclado do usuário
+  const lastKeyPressRef = useRef<number>(0);
+
   const showToast = (msg: string, isError = false) => {
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
@@ -184,7 +188,7 @@ export default function App() {
     }
   };
 
-  const startSpeechRecognitionAdd = () => {
+  const startSpeechRecognitionAdd = async () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       showToast("Navegador não suporta comando de voz.", true);
@@ -192,6 +196,19 @@ export default function App() {
     }
     
     try {
+      // Solicita permissão explicitamente via getUserMedia para forçar o pop-up de permissão nativo do Android/APK
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Para as faixas imediatamente para liberar o dispositivo para o SpeechRecognition
+          stream.getTracks().forEach(track => track.stop());
+        } catch (err) {
+          console.warn("Permissão de áudio negada via getUserMedia:", err);
+          showToast("Por favor, dê permissão ao microfone nas configurações do app no celular.", true);
+          return;
+        }
+      }
+
       const recognition = new SpeechRecognition();
       recognition.lang = "pt-BR";
       recognition.continuous = false;
@@ -227,7 +244,7 @@ export default function App() {
     }
   };
 
-  const startSpeechRecognitionEdit = () => {
+  const startSpeechRecognitionEdit = async () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       showToast("Navegador não suporta comando de voz.", true);
@@ -235,6 +252,19 @@ export default function App() {
     }
     
     try {
+      // Solicita permissão explicitamente via getUserMedia para forçar o pop-up de permissão nativo do Android/APK
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Para as faixas imediatamente para liberar o dispositivo para o SpeechRecognition
+          stream.getTracks().forEach(track => track.stop());
+        } catch (err) {
+          console.warn("Permissão de áudio negada via getUserMedia:", err);
+          showToast("Por favor, dê permissão ao microfone nas configurações do app no celular.", true);
+          return;
+        }
+      }
+
       const recognition = new SpeechRecognition();
       recognition.lang = "pt-BR";
       recognition.continuous = false;
@@ -285,6 +315,91 @@ export default function App() {
   useEffect(() => {
     resetDateTimeInputs();
   }, []);
+
+  // Registra o token do FCM para notificações mesmo com tela desligada
+  const registerFcmToken = async (clientToken: string) => {
+    try {
+      const messaging = await getMessagingInstance();
+      if (!messaging) return;
+
+      const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+      if (!vapidKey) {
+        console.log("[FCM] VITE_FCM_VAPID_KEY não está configurada no painel. Pulando registro do token.");
+        return;
+      }
+
+      // Solicita permissão para notificações
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        console.log("[FCM] Permissão de notificações negada.");
+        return;
+      }
+
+      const fcmToken = await getToken(messaging, {
+        vapidKey: vapidKey
+      });
+
+      if (fcmToken) {
+        console.log("[FCM] Token FCM gerado com sucesso:", fcmToken);
+        // Salva o token FCM no documento do cliente no Firestore
+        const clientRef = doc(db, "clientes", clientToken);
+        await updateDoc(clientRef, { fcmToken: fcmToken });
+      }
+    } catch (err) {
+      console.warn("[FCM] Erro ao obter token FCM:", err);
+    }
+  };
+
+  // Envia notificação push gratuita via chamada HTTP do Firebase FCM (Opção B)
+  const sendFcmNotification = async (targetToken: string, title: string, body: string) => {
+    const serverKey = (import.meta as any).env.VITE_FCM_SERVER_KEY;
+    if (!serverKey) {
+      console.warn("[FCM] VITE_FCM_SERVER_KEY não configurada. Notificação HTTP pulada.");
+      return;
+    }
+
+    try {
+      const response = await fetch("https://fcm.googleapis.com/fcm/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `key=${serverKey}`
+        },
+        body: JSON.stringify({
+          to: targetToken,
+          notification: {
+            title,
+            body,
+            icon: "/icon.png",
+            sound: "default"
+          },
+          data: {
+            click_action: "/"
+          }
+        })
+      });
+      const data = await response.json();
+      console.log("[FCM] Notificação enviada via chamada HTTP com sucesso:", data);
+    } catch (err) {
+      console.error("[FCM] Falha ao enviar chamada HTTP de notificação:", err);
+    }
+  };
+
+  // Monitora o uso do teclado no documento para pausar bips/checagens de overdue se o usuário estiver digitando
+  useEffect(() => {
+    const handleKeyDown = () => {
+      lastKeyPressRef.current = Date.now();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Registra o token FCM quando o token do usuário é validado
+  useEffect(() => {
+    if (token && token !== "8619") {
+      registerFcmToken(token);
+    }
+  }, [token]);
 
   // 1. Sincronização em Tempo Real do Status da Conta (Firestore doc listener)
   useEffect(() => {
@@ -344,7 +459,8 @@ export default function App() {
         vencimento: data.vencimento || "",
         diasRestantes,
         aviso: avisoVencimento,
-        isAdmin: false
+        isAdmin: false,
+        fcmToken: data.fcmToken || ""
       }));
     }, (error) => {
       console.error("Erro na escuta da conta:", error);
@@ -380,15 +496,16 @@ export default function App() {
         list.push({ id: docSnap.id, ...docSnap.data() } as Tarefa);
       });
 
-      // Ordenar tarefas por data e horário crescentes
-      list.sort((a, b) => {
+      // Separar pendentes e históricos
+      const pendentes = list.filter(t => t.status === "Pendente");
+      const historico = list.filter(t => t.status === "Realizada");
+
+      // Ordenar pendentes por data e horário crescentes (antigas/vencidas no topo)
+      pendentes.sort((a, b) => {
         const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
         const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
         return datetimeA - datetimeB;
       });
-
-      const pendentes = list.filter(t => t.status === "Pendente");
-      const historico = list.filter(t => t.status === "Realizada");
 
       // Ordenar o histórico de forma decrescente para exibir os mais recentes no topo
       historico.sort((a, b) => {
@@ -432,11 +549,17 @@ export default function App() {
     }
   }, [token, clientData?.nome]);
 
-  // Loop de verificação periódica de tarefas vencidas (releitura a cada 30 segundos)
+  // Loop de verificação periódica de tarefas vencidas (releitura a cada 40 segundos com controle de digitação)
   useEffect(() => {
     if (!token || token === "8619" || !clientData || !clientData.pendentes) return;
 
     const checkOverdueTasks = async () => {
+      // Se o usuário estiver teclando/digitando nos últimos 5 segundos, pula a checagem para não interromper com bips/alertas
+      if (Date.now() - lastKeyPressRef.current < 5000) {
+        console.log("[Loop 40s] Digitação detectada recentemente. Checagem postergada.");
+        return;
+      }
+
       const agora = Date.now();
       const pendentes = clientData.pendentes;
 
@@ -474,6 +597,11 @@ export default function App() {
             }).catch(err => console.warn("Erro ao enviar notificação via SW:", err));
           }
 
+          // 2.5 Notificação via Firebase Cloud Messaging (FCM) para múltiplos dispositivos / tela apagada (Opção B)
+          if (clientData.fcmToken) {
+            sendFcmNotification(clientData.fcmToken, "Compromisso Vencido!", `Está na hora de: ${t.tarefa} (${t.horario || ""})`);
+          }
+
           // 3. Emite um som discreto de aviso (Bip)
           playBeep("overdue");
 
@@ -492,8 +620,8 @@ export default function App() {
     // Executa uma checagem imediata ao mudar a lista de pendentes
     checkOverdueTasks();
 
-    // Loop de releitura a cada 30 segundos
-    const intervalId = setInterval(checkOverdueTasks, 30000);
+    // Loop de releitura a cada 40 segundos conforme solicitação do usuário
+    const intervalId = setInterval(checkOverdueTasks, 40000);
 
     return () => clearInterval(intervalId);
   }, [token, clientData?.pendentes]);
