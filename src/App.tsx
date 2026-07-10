@@ -83,6 +83,22 @@ export default function App() {
   const [loginPasscode, setLoginPasscode] = useState("");
   const [showSalesBlock, setShowSalesBlock] = useState(false);
   const [avisoState, setAvisoState] = useState<"visible" | "minimized" | "hidden">("visible");
+  const [headerMinimized, setHeaderMinimized] = useState<boolean>(() => {
+    const saved = safeStorage.getItem("taskControlProHeaderMinimized");
+    if (saved !== null) {
+      return saved === "true";
+    }
+    if (typeof window !== "undefined") {
+      return window.innerWidth < 640;
+    }
+    return false;
+  });
+
+  const toggleHeaderMinimized = () => {
+    const newVal = !headerMinimized;
+    setHeaderMinimized(newVal);
+    safeStorage.setItem("taskControlProHeaderMinimized", String(newVal));
+  };
 
   // WhatsApp Configuração Dinâmica
   const [whatsappNumber, setWhatsappNumber] = useState("5531988888888");
@@ -1159,65 +1175,48 @@ export default function App() {
           >
             
             {/* PAINEL DE CONTROLE E STATUS (Painelzinho em cima) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-900/40 border border-slate-800/80 p-4 rounded-2xl shadow-lg">
-              {/* Item 1: Status da Chave */}
-              <div className="flex items-center gap-3 bg-slate-950/30 border border-slate-800/40 p-3 rounded-xl">
-                <div className="w-8 h-8 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Key className="w-4 h-4 text-indigo-400" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Chave Ativa</p>
-                  <p className="text-xs font-mono font-bold text-slate-200 truncate" title={token}>
+            <div className="flex items-center justify-between gap-3 bg-slate-900/40 border border-slate-800/80 p-2.5 px-4 rounded-xl shadow-md">
+              <div className="flex items-center gap-3.5 text-xs text-slate-400 font-mono flex-wrap min-w-0">
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <Key className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                  <span className="truncate max-w-[100px] text-slate-300 font-bold" title={token}>
                     {token.length > 8 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token}
-                  </p>
-                </div>
+                  </span>
+                </span>
+                <span className="text-slate-800 select-none hidden xs:inline">|</span>
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {clientData && (clientData.status === "Vitalício" || clientData.status === "Pago") ? (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                      <span className="text-emerald-400 font-bold">Vitalício</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
+                      <span className="text-sky-300 font-bold">Teste ({clientData?.diasRestantes ?? 0}d)</span>
+                    </>
+                  )}
+                </span>
+                <span className="text-slate-800 select-none hidden xs:inline">|</span>
+                <button
+                  type="button"
+                  onClick={toggleBeep}
+                  className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                  title="Alternar aviso sonoro"
+                >
+                  {beepEnabled ? (
+                    <>
+                      <Volume2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 animate-pulse" />
+                      <span className="text-emerald-400 font-bold">Som</span>
+                    </>
+                  ) : (
+                    <>
+                      <VolumeX className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                      <span className="text-slate-500 font-bold">Mudo</span>
+                    </>
+                  )}
+                </button>
               </div>
-
-              {/* Item 2: Plano Atual */}
-              <div className="flex items-center gap-3 bg-slate-950/30 border border-slate-800/40 p-3 rounded-xl">
-                {clientData && (clientData.status === "Vitalício" || clientData.status === "Pago") ? (
-                  <>
-                    <div className="w-8 h-8 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Seu Plano</p>
-                      <p className="text-xs font-bold text-emerald-400">⭐ Vitalício (Ativo)</p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-8 h-8 bg-sky-500/10 border border-sky-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Clock className="w-4 h-4 text-sky-400" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Seu Plano</p>
-                      <p className="text-xs font-bold text-sky-300">Teste ({clientData?.diasRestantes ?? 0}d rest.)</p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Item 3: Controle do Bip / Alarme Sonoro */}
-              <button
-                type="button"
-                onClick={toggleBeep}
-                className="flex items-center gap-3 bg-slate-950/30 hover:bg-slate-950/65 border border-slate-800/40 hover:border-slate-700/65 p-3 rounded-xl transition-all text-left cursor-pointer group flex-shrink-0 text-slate-100"
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
-                  beepEnabled
-                    ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 group-hover:scale-105"
-                    : "bg-slate-800/50 border border-slate-700 text-slate-500"
-                }`}>
-                  {beepEnabled ? <Volume2 className="w-4 h-4 animate-pulse" /> : <VolumeX className="w-4 h-4" />}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 font-mono">Som do Alarme</p>
-                  <p className={`text-xs font-bold ${beepEnabled ? "text-emerald-400" : "text-slate-500"}`}>
-                    {beepEnabled ? "AVISO SONORO ATIVO" : "AVISO MUTADO"}
-                  </p>
-                </div>
-              </button>
             </div>
             
             {/* ALERT BOX EXPIRE ADVISORY WARNING */}
