@@ -641,7 +641,7 @@ export default function App() {
           }
 
           // 2. Notificação via Service Worker (Melhor suporte para segundo plano/celular)
-          if ("serviceWorker" in navigator) {
+          if ("serviceWorker" in navigator && "Notification" in window && Notification.permission === "granted") {
             navigator.serviceWorker.ready.then((registration) => {
               registration.showNotification("Compromisso Vencido!", {
                 body: `Está na hora de: ${t.tarefa} (${t.horario || ""})`,
