@@ -163,6 +163,7 @@ export default function App() {
   // Voice Recognition & Sound Beep (Bip) System
   const [isListeningAdd, setIsListeningAdd] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [beepEnabled, setBeepEnabled] = useState(() => {
     return safeStorage.getItem("taskControlProBeepEnabled") !== "false";
   });
@@ -362,9 +363,21 @@ export default function App() {
       const messaging = await getMessagingInstance();
       if (!messaging) return;
 
-      const vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
+      let vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
       if (!vapidKey) {
-        console.log("[FCM] VITE_FCM_VAPID_KEY não está configurada no painel. Pulando registro do token.");
+        // Fallback: busca da coleção config/fcm do Firestore
+        try {
+          const fcmSnap = await getDoc(doc(db, "config", "fcm"));
+          if (fcmSnap.exists() && fcmSnap.data().vapidKey) {
+            vapidKey = fcmSnap.data().vapidKey;
+          }
+        } catch (e) {
+          console.error("[FCM] Erro ao buscar VAPID Key do Firestore:", e);
+        }
+      }
+
+      if (!vapidKey) {
+        console.log("[FCM] VITE_FCM_VAPID_KEY não está configurada. Pulando registro do token.");
         return;
       }
 
@@ -375,8 +388,20 @@ export default function App() {
         return;
       }
 
+      // Garante que registramos o Service Worker correto para o FCM e o passamos para o getToken
+      let registration: ServiceWorkerRegistration | undefined;
+      if ("serviceWorker" in navigator) {
+        try {
+          registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", { scope: "/" });
+          console.log("[FCM] Service Worker de mensagens registrado com sucesso.");
+        } catch (swErr) {
+          console.error("[FCM] Erro ao registrar o Service Worker do FCM:", swErr);
+        }
+      }
+
       const fcmToken = await getToken(messaging, {
-        vapidKey: vapidKey
+        vapidKey: vapidKey,
+        serviceWorkerRegistration: registration
       });
 
       if (fcmToken) {
@@ -392,7 +417,18 @@ export default function App() {
 
   // Envia notificação push gratuita via chamada HTTP do Firebase FCM (Opção B)
   const sendFcmNotification = async (targetToken: string, title: string, body: string) => {
-    const serverKey = (import.meta as any).env.VITE_FCM_SERVER_KEY;
+    let serverKey = (import.meta as any).env.VITE_FCM_SERVER_KEY;
+    if (!serverKey) {
+      try {
+        const fcmSnap = await getDoc(doc(db, "config", "fcm"));
+        if (fcmSnap.exists() && fcmSnap.data().serverKey) {
+          serverKey = fcmSnap.data().serverKey;
+        }
+      } catch (e) {
+        console.error("[FCM] Erro ao buscar Server Key do Firestore:", e);
+      }
+    }
+
     if (!serverKey) {
       console.warn("[FCM] VITE_FCM_SERVER_KEY não configurada. Notificação HTTP pulada.");
       return;
@@ -429,6 +465,15 @@ export default function App() {
     } catch (err) {
       console.error("[FCM] Falha ao enviar chamada HTTP de notificação:", err);
     }
+  };
+
+  const testPushNotification = async () => {
+    if (!clientData?.fcmToken) {
+      showToast("Nenhum token registrado! Certifique-se de permitir notificações e atualize a página.", true);
+      return;
+    }
+    showToast("Disparando teste... Bloqueie o celular nos próximos 5 segundos!");
+    await sendFcmNotification(clientData.fcmToken, "Teste de Alerta! 🔔", "Seu celular está recebendo alertas da agenda com sucesso!");
   };
 
   // Monitora o uso do teclado no documento para pausar bips/checagens de overdue se o usuário estiver digitando
@@ -594,7 +639,7 @@ export default function App() {
 
     // Garante que o Service Worker está registrado
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js", { scope: "/" })
+      navigator.serviceWorker.register("/firebase-messaging-sw.js", { scope: "/" })
         .then(() => console.log("[Service Worker] Registrado com sucesso."))
         .catch(err => console.error("[Service Worker] Erro ao registrar:", err));
     }
@@ -1223,6 +1268,62 @@ export default function App() {
                   )}
                 </button>
               </div>
+            </div>
+
+            {/* DEDICATED NOTIFICATIONS SETUP AND TEST BOX */}
+            <div className="bg-slate-900/30 border border-slate-800/60 p-4 rounded-2xl space-y-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <span className="text-xs font-bold text-slate-200">Alertas no Celular</span>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => setIsGuideOpen(!isGuideOpen)}
+                    className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 hover:text-indigo-300 transition-all cursor-pointer bg-indigo-500/10 px-2.5 py-1.5 rounded-lg flex items-center gap-1"
+                  >
+                    {isGuideOpen ? "Fechar Instruções" : "Como Ativar?"}
+                  </button>
+                  <button
+                    onClick={testPushNotification}
+                    className="flex-1 sm:flex-none text-[11px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 transition-all cursor-pointer bg-emerald-500/10 px-2.5 py-1.5 rounded-lg flex items-center justify-center gap-1"
+                  >
+                    Testar Notificação Push 🔔
+                  </button>
+                </div>
+              </div>
+
+              {isGuideOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  className="bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-xs text-slate-300 space-y-2.5"
+                >
+                  <p className="text-slate-400 leading-relaxed">
+                    Para garantir que você receba os alertas mesmo quando o celular estiver guardado ou com a tela apagada (em repouso):
+                  </p>
+                  <div className="space-y-2 pl-2">
+                    <div className="flex items-start gap-2">
+                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+                      <div>
+                        <strong className="text-slate-200">Permissão de Notificação:</strong> Clique em permitir quando o celular solicitar. Se bloqueou por engano, limpe os dados do site ou clique no ícone de cadeado na barra de endereços para liberar.
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+                      <div>
+                        <strong className="text-slate-200">Usuários de iPhone (iOS):</strong> No Safari, clique no botão de <strong className="text-indigo-400">Compartilhar</strong> (quadrado com seta para cima) &gt; <strong className="text-indigo-400">"Adicionar à Tela de Início"</strong>. Abra o app por esse novo ícone na sua tela inicial para habilitar as notificações.
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+                      <div>
+                        <strong className="text-slate-200">Alertas 24h em repouso absoluto:</strong> Como os celulares congelam abas abertas em repouso, o Administrador deve configurar a Chave FCM do Servidor no painel de controle e ativar o script gratuito de automação de 1 minuto (Google Apps Script).
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </div>
             
             {/* ALERT BOX EXPIRE ADVISORY WARNING */}

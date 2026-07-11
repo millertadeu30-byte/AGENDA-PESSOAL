@@ -31,3 +31,27 @@ messaging.onBackgroundMessage((payload) => {
 
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
+
+// Manipulador para quando o usuário clica na notificação do FCM
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  
+  // Define o link de destino (se houver na carga útil) ou abre a raiz do site
+  const clickAction = event.notification.data?.click_action || "/";
+  
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      // Tenta focar em uma aba que já esteja aberta
+      for (const client of clientList) {
+        if ("focus" in client) {
+          return client.focus();
+        }
+      }
+      // Se nenhuma aba estiver aberta, abre uma nova
+      if (clients.openWindow) {
+        return clients.openWindow(clickAction);
+      }
+    })
+  );
+});
+
