@@ -7,6 +7,7 @@ export interface Tarefa {
   recorrencia: "Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual";
   status: "Pendente" | "Realizada";
   notificado?: boolean;
+  telefoneDestinatario?: string; // Celular do destinatário opcional
 }
 
 export interface ClientData {
@@ -19,4 +20,5 @@ export interface ClientData {
   expired?: boolean;
   isAdmin?: boolean;
   fcmToken?: string;
+  telefone?: string; // Celular principal do usuário
 }

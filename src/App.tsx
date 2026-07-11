@@ -23,7 +23,9 @@ import {
   VolumeX,
   Sparkles,
   Minimize2,
-  Maximize2
+  Maximize2,
+  Phone,
+  MessageSquare
 } from "lucide-react";
 import { Tarefa, ClientData } from "./types";
 import AdminPanel from "./components/AdminPanel";
@@ -164,6 +166,14 @@ export default function App() {
   const [isListeningAdd, setIsListeningAdd] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+
+  // Phone numbers & SMS configurations state
+  const [userPhoneInput, setUserPhoneInput] = useState("");
+  const [recipientPhone, setRecipientPhone] = useState("");
+  const [editRecipientPhone, setEditRecipientPhone] = useState("");
+  const [callmebotApiKey, setCallmebotApiKey] = useState(() => {
+    return safeStorage.getItem("taskControlProCallmebotKey") || "";
+  });
   const [beepEnabled, setBeepEnabled] = useState(() => {
     return safeStorage.getItem("taskControlProBeepEnabled") !== "false";
   });
@@ -357,123 +367,68 @@ export default function App() {
     resetDateTimeInputs();
   }, []);
 
-  // Registra o token do FCM para notificações mesmo com tela desligada
-  const registerFcmToken = async (clientToken: string) => {
-    try {
-      const messaging = await getMessagingInstance();
-      if (!messaging) return;
+  // Envia alertas via WhatsApp/SMS de forma automática em segundo plano usando CallMeBot (opção 100% gratuita)
+  const sendSmsOrWhatsappAlert = async (task: Tarefa) => {
+    const mainPhone = clientData?.telefone || "";
+    const extraPhone = task.telefoneDestinatario || "";
+    const formattedDate = formatDateString(task.data);
+    const messageText = `🔔 *Alerta de Compromisso!* \n\nEstá na hora de: *${task.tarefa}* \nHorário: *${task.horario}* em *${formattedDate}*.\n\n_Enviado por Agenda Pessoal_`;
 
-      let vapidKey = (import.meta as any).env.VITE_FCM_VAPID_KEY;
-      if (!vapidKey) {
-        // Fallback: busca da coleção config/fcm do Firestore
+    console.log("[Alerts] Disparando avisos de WhatsApp para:", { mainPhone, extraPhone });
+
+    if (callmebotApiKey.trim()) {
+      const encodedMsg = encodeURIComponent(messageText);
+      
+      // Envia para o celular principal do usuário
+      if (mainPhone) {
         try {
-          const fcmSnap = await getDoc(doc(db, "config", "fcm"));
-          if (fcmSnap.exists() && fcmSnap.data().vapidKey) {
-            vapidKey = fcmSnap.data().vapidKey;
-          }
-        } catch (e) {
-          console.error("[FCM] Erro ao buscar VAPID Key do Firestore:", e);
+          const cleanPhone = mainPhone.replace(/\D/g, "");
+          const url = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodedMsg}&apikey=${callmebotApiKey.trim()}`;
+          // Usamos 'no-cors' para disparar a requisição sem ser bloqueado pela política de CORS do navegador
+          fetch(url, { mode: "no-cors" });
+          console.log("[CallMeBot] Alerta enviado para o celular principal:", cleanPhone);
+        } catch (err) {
+          console.error("Erro CallMeBot principal:", err);
         }
       }
 
-      if (!vapidKey) {
-        console.log("[FCM] VITE_FCM_VAPID_KEY não está configurada. Pulando registro do token.");
-        return;
-      }
-
-      // Solicita permissão para notificações
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        console.log("[FCM] Permissão de notificações negada.");
-        return;
-      }
-
-      // Garante que registramos o Service Worker correto para o FCM e o passamos para o getToken
-      let registration: ServiceWorkerRegistration | undefined;
-      if ("serviceWorker" in navigator) {
+      // Envia para o celular destinatário extra configurado na tarefa
+      if (extraPhone) {
         try {
-          registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", { scope: "/" });
-          console.log("[FCM] Service Worker de mensagens registrado com sucesso.");
-        } catch (swErr) {
-          console.error("[FCM] Erro ao registrar o Service Worker do FCM:", swErr);
+          const cleanPhone = extraPhone.replace(/\D/g, "");
+          const url = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodedMsg}&apikey=${callmebotApiKey.trim()}`;
+          fetch(url, { mode: "no-cors" });
+          console.log("[CallMeBot] Alerta enviado para o celular extra:", cleanPhone);
+        } catch (err) {
+          console.error("Erro CallMeBot extra:", err);
         }
       }
-
-      const fcmToken = await getToken(messaging, {
-        vapidKey: vapidKey,
-        serviceWorkerRegistration: registration
-      });
-
-      if (fcmToken) {
-        console.log("[FCM] Token FCM gerado com sucesso:", fcmToken);
-        // Salva o token FCM no documento do cliente no Firestore
-        const clientRef = doc(db, "clientes", clientToken);
-        await updateDoc(clientRef, { fcmToken: fcmToken });
-      }
-    } catch (err) {
-      console.warn("[FCM] Erro ao obter token FCM:", err);
     }
   };
 
-  // Envia notificação push gratuita via chamada HTTP do Firebase FCM (Opção B)
-  const sendFcmNotification = async (targetToken: string, title: string, body: string) => {
-    let serverKey = (import.meta as any).env.VITE_FCM_SERVER_KEY;
-    if (!serverKey) {
-      try {
-        const fcmSnap = await getDoc(doc(db, "config", "fcm"));
-        if (fcmSnap.exists() && fcmSnap.data().serverKey) {
-          serverKey = fcmSnap.data().serverKey;
-        }
-      } catch (e) {
-        console.error("[FCM] Erro ao buscar Server Key do Firestore:", e);
-      }
+  // Retorna o link direto do WhatsApp Web/App com a mensagem pronta (100% gratuito e ilimitado)
+  const getWhatsappLink = (phone: string, task: Tarefa) => {
+    let cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length >= 10 && !cleanPhone.startsWith("55")) {
+      cleanPhone = `55${cleanPhone}`;
     }
-
-    if (!serverKey) {
-      console.warn("[FCM] VITE_FCM_SERVER_KEY não configurada. Notificação HTTP pulada.");
-      return;
-    }
-
-    try {
-      const response = await fetch("https://fcm.googleapis.com/fcm/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `key=${serverKey}`
-        },
-        body: JSON.stringify({
-          to: targetToken,
-          priority: "high",
-          time_to_live: 0,
-          notification: {
-            title,
-            body,
-            icon: "/icon.png",
-            sound: "default",
-            android_channel_id: "alarms",
-            click_action: "/"
-          },
-          data: {
-            title,
-            body,
-            click_action: "/"
-          }
-        })
-      });
-      const data = await response.json();
-      console.log("[FCM] Notificação enviada via chamada HTTP com sucesso:", data);
-    } catch (err) {
-      console.error("[FCM] Falha ao enviar chamada HTTP de notificação:", err);
-    }
+    const message = `🔔 *Lembrete de Compromisso:* \n\n"${task.tarefa}" \nHorário: *${task.horario || ""}* em *${formatDateString(task.data)}*.`;
+    return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
   };
 
-  const testPushNotification = async () => {
-    if (!clientData?.fcmToken) {
-      showToast("Nenhum token registrado! Certifique-se de permitir notificações e atualize a página.", true);
-      return;
+  // Salva o número de telefone principal do usuário no Firestore
+  const handleSaveUserPhone = async () => {
+    if (!token) return;
+    setGlobalLoading(true);
+    try {
+      const clientRef = doc(db, "clientes", token);
+      await updateDoc(clientRef, { telefone: userPhoneInput.trim() });
+      showToast("Número de celular gravado com sucesso! 📱");
+    } catch (err: any) {
+      showToast("Erro ao gravar celular: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
     }
-    showToast("Disparando teste... Bloqueie o celular nos próximos 5 segundos!");
-    await sendFcmNotification(clientData.fcmToken, "Teste de Alerta! 🔔", "Seu celular está recebendo alertas da agenda com sucesso!");
   };
 
   // Monitora o uso do teclado no documento para pausar bips/checagens de overdue se o usuário estiver digitando
@@ -484,13 +439,6 @@ export default function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
-
-  // Registra o token FCM quando o token do usuário é validado
-  useEffect(() => {
-    if (token && token !== "8619") {
-      registerFcmToken(token);
-    }
-  }, [token]);
 
   // 1. Sincronização em Tempo Real do Status da Conta (Firestore doc listener)
   useEffect(() => {
@@ -551,7 +499,8 @@ export default function App() {
         diasRestantes,
         aviso: avisoVencimento,
         isAdmin: false,
-        fcmToken: data.fcmToken || ""
+        fcmToken: data.fcmToken || "",
+        telefone: data.telefone || ""
       }));
     }, (error) => {
       console.error("Erro na escuta da conta:", error);
@@ -559,6 +508,13 @@ export default function App() {
 
     return () => unsubscribe();
   }, [token]);
+
+  // Sincroniza o input do telefone principal quando os dados do cliente carregam
+  useEffect(() => {
+    if (clientData?.telefone) {
+      setUserPhoneInput(clientData.telefone);
+    }
+  }, [clientData?.telefone]);
 
   // 2. Sincronização em Tempo Real das Tarefas (Firestore collection query listener)
   useEffect(() => {
@@ -698,10 +654,8 @@ export default function App() {
             }).catch(err => console.warn("Erro ao enviar notificação via SW:", err));
           }
 
-          // 2.5 Notificação via Firebase Cloud Messaging (FCM) para múltiplos dispositivos / tela apagada (Opção B)
-          if (clientData.fcmToken) {
-            sendFcmNotification(clientData.fcmToken, "Compromisso Vencido!", `Está na hora de: ${t.tarefa} (${t.horario || ""})`);
-          }
+          // 2.5 Notificação automática via WhatsApp/SMS se CallMeBot estiver configurado
+          sendSmsOrWhatsappAlert(t);
 
           // 3. Emite um som discreto de aviso (Bip)
           playBeep("overdue");
@@ -829,12 +783,14 @@ export default function App() {
         horario: taskTime || "12:00",
         recorrencia: taskRecurrence,
         status: "Pendente",
-        notificado: false
+        notificado: false,
+        telefoneDestinatario: recipientPhone.trim()
       };
 
       await setDoc(doc(db, "tarefas", taskId), newTask);
       
       setTaskName("");
+      setRecipientPhone("");
       resetDateTimeInputs();
       setTaskRecurrence("Nenhuma");
       setIsFormOpen(false);
@@ -910,6 +866,7 @@ export default function App() {
     setEditDate(t.data);
     setEditTime(t.horario);
     setEditRecurrence(t.recorrencia);
+    setEditRecipientPhone(t.telefoneDestinatario || "");
     setEditModalOpen(true);
   };
 
@@ -928,7 +885,8 @@ export default function App() {
         data: editDate,
         horario: editTime || "12:00",
         recorrencia: editRecurrence,
-        notificado: false // Reseta notificação ao alterar prazo
+        notificado: false, // Reseta notificação ao alterar prazo
+        telefoneDestinatario: editRecipientPhone.trim()
       });
       showToast("Tarefa atualizada!");
     } catch (err: any) {
@@ -1270,26 +1228,69 @@ export default function App() {
               </div>
             </div>
 
-            {/* DEDICATED NOTIFICATIONS SETUP AND TEST BOX */}
-            <div className="bg-slate-900/30 border border-slate-800/60 p-4 rounded-2xl space-y-3">
+            {/* DEDICATED NOTIFICATIONS SETUP AND TEST BOX - WHATSAPP & SMS SETUP */}
+            <div className="bg-slate-900/30 border border-slate-800/60 p-4 rounded-2xl space-y-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-indigo-400 animate-pulse" />
-                  <span className="text-xs font-bold text-slate-200">Alertas no Celular</span>
+                  <Phone className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <span className="text-xs font-bold text-slate-200">Alertas de Celular (WhatsApp / SMS)</span>
                 </div>
                 <div className="flex items-center gap-2 w-full sm:w-auto">
                   <button
                     onClick={() => setIsGuideOpen(!isGuideOpen)}
-                    className="text-[11px] font-bold uppercase tracking-wider text-indigo-400 hover:text-indigo-300 transition-all cursor-pointer bg-indigo-500/10 px-2.5 py-1.5 rounded-lg flex items-center gap-1"
+                    className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 transition-all cursor-pointer bg-emerald-500/10 px-2.5 py-1.5 rounded-lg flex items-center gap-1"
                   >
-                    {isGuideOpen ? "Fechar Instruções" : "Como Ativar?"}
+                    {isGuideOpen ? "Fechar Instruções" : "Como Funciona? 📲"}
                   </button>
+                </div>
+              </div>
+
+              {/* Main Phone Input Field */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row gap-2 items-end">
+                  <div className="flex-grow w-full space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Seu Número de Celular (com DDD)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Ex: 11999999999"
+                        value={userPhoneInput}
+                        onChange={(e) => setUserPhoneInput(e.target.value)}
+                        className="w-full bg-slate-950/60 border border-slate-800 p-2.5 pl-9 text-slate-200 text-xs rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                      />
+                      <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+                    </div>
+                  </div>
                   <button
-                    onClick={testPushNotification}
-                    className="flex-1 sm:flex-none text-[11px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 transition-all cursor-pointer bg-emerald-500/10 px-2.5 py-1.5 rounded-lg flex items-center justify-center gap-1"
+                    onClick={handleSaveUserPhone}
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
                   >
-                    Testar Notificação Push 🔔
+                    Gravar Celular
                   </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 items-end pt-2 border-t border-slate-800/40">
+                  <div className="flex-grow w-full space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Chave API CallMeBot (Opcional - para disparos automáticos)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="password"
+                        placeholder="Insira sua Chave API do CallMeBot"
+                        value={callmebotApiKey}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCallmebotApiKey(val);
+                          safeStorage.setItem("taskControlProCallmebotKey", val);
+                        }}
+                        className="w-full bg-slate-950/60 border border-slate-800 p-2.5 pl-9 text-slate-200 text-xs rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                      />
+                      <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1300,25 +1301,28 @@ export default function App() {
                   className="bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-xs text-slate-300 space-y-2.5"
                 >
                   <p className="text-slate-400 leading-relaxed">
-                    Para garantir que você receba os alertas mesmo quando o celular estiver guardado ou com a tela apagada (em repouso):
+                    Você pode receber alertas de vencimento diretamente em qualquer celular de forma simples e gratuita de duas formas:
                   </p>
                   <div className="space-y-2 pl-2">
                     <div className="flex items-start gap-2">
                       <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
                       <div>
-                        <strong className="text-slate-200">Permissão de Notificação:</strong> Clique em permitir quando o celular solicitar. Se bloqueou por engano, limpe os dados do site ou clique no ícone de cadeado na barra de endereços para liberar.
+                        <strong className="text-slate-200">Envio Manual Direct-WhatsApp (Ilimitado e 100% Grátis):</strong> Cada compromisso terá um botão de WhatsApp dedicado. Ao vencer, o app emite o BIP sonoro e você pode clicar no botão para abrir o WhatsApp Web/App com a mensagem de lembrete prontinha preenchida para enviar a você mesmo ou ao destinatário!
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
                       <div>
-                        <strong className="text-slate-200">Usuários de iPhone (iOS):</strong> No Safari, clique no botão de <strong className="text-indigo-400">Compartilhar</strong> (quadrado com seta para cima) &gt; <strong className="text-indigo-400">"Adicionar à Tela de Início"</strong>. Abra o app por esse novo ícone na sua tela inicial para habilitar as notificações.
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
-                      <div>
-                        <strong className="text-slate-200">Alertas 24h em repouso absoluto:</strong> Como os celulares congelam abas abertas em repouso, o Administrador deve configurar a Chave FCM do Servidor no painel de controle e ativar o script gratuito de automação de 1 minuto (Google Apps Script).
+                        <strong className="text-slate-200">Envio Automático em Segundo Plano (WhatsApp Automatizado):</strong> Para que as notificações cheguem sozinhas sem precisar clicar em nada, basta usar a ferramenta gratuita <strong className="text-emerald-400">CallMeBot</strong>.
+                        <br />
+                        <span className="text-slate-400 block mt-1">
+                          Como obter sua chave grátis em 15 segundos:
+                          <ol className="list-decimal pl-4 mt-0.5 space-y-0.5">
+                            <li>Adicione o número <strong className="text-slate-300">+34 644 10 55 53</strong> no seu WhatsApp.</li>
+                            <li>Envie a mensagem: <code className="bg-slate-950 text-emerald-400 px-1 py-0.5 rounded font-mono">I allow callmebot to send me messages</code></li>
+                            <li>O robô enviará sua chave API de volta. Insira-a no campo acima para habilitar disparos silenciosos automáticos.</li>
+                          </ol>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1531,6 +1535,22 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Campo opcional de celular para outra pessoa receber aviso */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Enviar aviso também para outro celular? (Opcional - com DDD)</label>
+                      <div className="relative flex items-center">
+                        <input
+                          id="input-task-recipient-phone"
+                          type="text"
+                          placeholder="Ex: 11988888888"
+                          value={recipientPhone}
+                          onChange={(e) => setRecipientPhone(e.target.value)}
+                          className="w-full bg-slate-950/60 border border-slate-800 p-3 pl-10 text-slate-100 text-sm placeholder-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        />
+                        <Phone className="w-4 h-4 text-slate-500 absolute left-3.5" />
+                      </div>
+                    </div>
+
                     <button
                       id="btn-add-task-submit"
                       type="submit"
@@ -1646,7 +1666,7 @@ export default function App() {
                           </div>
 
                           {/* Date and Time Indicators */}
-                          <div className="flex items-center gap-3 text-xs text-slate-400 font-mono">
+                          <div className="flex items-center gap-3 text-xs text-slate-400 font-mono flex-wrap">
                             <span className="flex items-center gap-1.5 bg-slate-950/40 border border-slate-800/40 px-2.5 py-1 rounded-lg">
                               <Calendar className="w-3.5 h-3.5 text-blue-400" />
                               {formatDateString(t.data)}
@@ -1655,6 +1675,12 @@ export default function App() {
                               <Clock className="w-3.5 h-3.5 text-purple-400" />
                               {t.horario || "--:--"}
                             </span>
+                            {t.telefoneDestinatario && (
+                              <span className="flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-lg text-emerald-300">
+                                <Phone className="w-3 h-3 text-emerald-400" />
+                                Para: {t.telefoneDestinatario}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1689,6 +1715,32 @@ export default function App() {
                           </div>
                         ) : currentTab === "pendentes" ? (
                           <>
+                            {/* WhatsApp Direct principal */}
+                            {clientData?.telefone && (
+                              <a
+                                href={getWhatsappLink(clientData.telefone, t)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-9 h-9 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600 hover:text-white flex items-center justify-center rounded-xl transition-all"
+                                title="Enviar lembrete WhatsApp ao seu celular"
+                              >
+                                <MessageSquare className="w-4 h-4" />
+                              </a>
+                            )}
+
+                            {/* WhatsApp Direct extra */}
+                            {t.telefoneDestinatario && (
+                              <a
+                                href={getWhatsappLink(t.telefoneDestinatario, t)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-9 h-9 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600 hover:text-white flex items-center justify-center rounded-xl transition-all"
+                                title={`Enviar lembrete WhatsApp para ${t.telefoneDestinatario}`}
+                              >
+                                <Phone className="w-4 h-4" />
+                              </a>
+                            )}
+
                             <button
                               onClick={() => openEditModal(t)}
                               className="inline-flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold uppercase tracking-wider rounded-xl border border-slate-700/60 transition-all cursor-pointer"
@@ -1846,6 +1898,21 @@ export default function App() {
                     <option value="Mensal">Mensal</option>
                     <option value="Anual">Anual</option>
                   </select>
+                </div>
+
+                {/* Campo opcional de celular para outra pessoa na edição */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Enviar aviso também para outro celular? (Opcional - com DDD)</label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      placeholder="Ex: 11988888888"
+                      value={editRecipientPhone}
+                      onChange={(e) => setEditRecipientPhone(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 text-slate-100 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <Phone className="w-4 h-4 text-slate-500 absolute left-3.5" />
+                  </div>
                 </div>
 
                 <div className="pt-2">
