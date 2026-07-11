@@ -529,6 +529,22 @@ export default function App() {
     }
   }, [token, clientData?.nome]);
 
+  // 3.5 Sincronização automática do badge (bolinha/contador) do ícone do PWA com as pendências
+  useEffect(() => {
+    if ("setAppBadge" in navigator) {
+      const count = (token && token !== "8619" && clientData?.pendentes) ? clientData.pendentes.length : 0;
+      if (count > 0) {
+        (navigator as any).setAppBadge(count).catch((err: any) => {
+          console.warn("[Badge] Erro ao definir badge do ícone:", err);
+        });
+      } else {
+        (navigator as any).clearAppBadge().catch((err: any) => {
+          console.warn("[Badge] Erro ao limpar badge do ícone:", err);
+        });
+      }
+    }
+  }, [token, clientData?.pendentes?.length]);
+
   // Loop de verificação periódica de tarefas vencidas (releitura a cada 40 segundos com controle de digitação)
   useEffect(() => {
     if (!token || token === "8619" || !clientData || !clientData.pendentes) return;
