@@ -10,9 +10,10 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body,
-    vibrate: [300, 100, 300],
+    vibrate: [500, 150, 500, 150, 500, 150, 500, 150, 500],
     tag: data.tag || "task-alert",
     renotify: true,
+    requireInteraction: true,
     data: {
       dateOfArrival: Date.now(),
       primaryKey: data.tag || "1"

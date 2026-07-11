@@ -407,13 +407,19 @@ export default function App() {
         },
         body: JSON.stringify({
           to: targetToken,
+          priority: "high",
+          time_to_live: 0,
           notification: {
             title,
             body,
             icon: "/icon.png",
-            sound: "default"
+            sound: "default",
+            android_channel_id: "alarms",
+            click_action: "/"
           },
           data: {
+            title,
+            body,
             click_action: "/"
           }
         })

@@ -22,8 +22,9 @@ messaging.onBackgroundMessage((payload) => {
   const notificationOptions = {
     body: payload.notification?.body || "Sua tarefa venceu!",
     icon: payload.notification?.icon || "/icon.png",
-    vibrate: [300, 100, 300],
+    vibrate: [500, 150, 500, 150, 500, 150, 500, 150, 500],
     tag: payload.notification?.tag || "fcm-alert",
+    renotify: true,
     requireInteraction: true,
     data: payload.data || {}
   };
