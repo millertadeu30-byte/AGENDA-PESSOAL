@@ -165,15 +165,7 @@ export default function App() {
   // Voice Recognition & Sound Beep (Bip) System
   const [isListeningAdd, setIsListeningAdd] = useState(false);
   const [isListeningEdit, setIsListeningEdit] = useState(false);
-  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
-  // Phone numbers & SMS configurations state
-  const [userPhoneInput, setUserPhoneInput] = useState("");
-  const [recipientPhone, setRecipientPhone] = useState("");
-  const [editRecipientPhone, setEditRecipientPhone] = useState("");
-  const [callmebotApiKey, setCallmebotApiKey] = useState(() => {
-    return safeStorage.getItem("taskControlProCallmebotKey") || "";
-  });
   const [beepEnabled, setBeepEnabled] = useState(() => {
     return safeStorage.getItem("taskControlProBeepEnabled") !== "false";
   });
@@ -238,6 +230,8 @@ export default function App() {
       setTimeout(() => playBeep("click"), 100);
     }
   };
+
+
 
   const startSpeechRecognitionAdd = async () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -367,70 +361,6 @@ export default function App() {
     resetDateTimeInputs();
   }, []);
 
-  // Envia alertas via WhatsApp/SMS de forma automática em segundo plano usando CallMeBot (opção 100% gratuita)
-  const sendSmsOrWhatsappAlert = async (task: Tarefa) => {
-    const mainPhone = clientData?.telefone || "";
-    const extraPhone = task.telefoneDestinatario || "";
-    const formattedDate = formatDateString(task.data);
-    const messageText = `🔔 *Alerta de Compromisso!* \n\nEstá na hora de: *${task.tarefa}* \nHorário: *${task.horario}* em *${formattedDate}*.\n\n_Enviado por Agenda Pessoal_`;
-
-    console.log("[Alerts] Disparando avisos de WhatsApp para:", { mainPhone, extraPhone });
-
-    if (callmebotApiKey.trim()) {
-      const encodedMsg = encodeURIComponent(messageText);
-      
-      // Envia para o celular principal do usuário
-      if (mainPhone) {
-        try {
-          const cleanPhone = mainPhone.replace(/\D/g, "");
-          const url = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodedMsg}&apikey=${callmebotApiKey.trim()}`;
-          // Usamos 'no-cors' para disparar a requisição sem ser bloqueado pela política de CORS do navegador
-          fetch(url, { mode: "no-cors" });
-          console.log("[CallMeBot] Alerta enviado para o celular principal:", cleanPhone);
-        } catch (err) {
-          console.error("Erro CallMeBot principal:", err);
-        }
-      }
-
-      // Envia para o celular destinatário extra configurado na tarefa
-      if (extraPhone) {
-        try {
-          const cleanPhone = extraPhone.replace(/\D/g, "");
-          const url = `https://api.callmebot.com/whatsapp.php?phone=${cleanPhone}&text=${encodedMsg}&apikey=${callmebotApiKey.trim()}`;
-          fetch(url, { mode: "no-cors" });
-          console.log("[CallMeBot] Alerta enviado para o celular extra:", cleanPhone);
-        } catch (err) {
-          console.error("Erro CallMeBot extra:", err);
-        }
-      }
-    }
-  };
-
-  // Retorna o link direto do WhatsApp Web/App com a mensagem pronta (100% gratuito e ilimitado)
-  const getWhatsappLink = (phone: string, task: Tarefa) => {
-    let cleanPhone = phone.replace(/\D/g, "");
-    if (cleanPhone.length >= 10 && !cleanPhone.startsWith("55")) {
-      cleanPhone = `55${cleanPhone}`;
-    }
-    const message = `🔔 *Lembrete de Compromisso:* \n\n"${task.tarefa}" \nHorário: *${task.horario || ""}* em *${formatDateString(task.data)}*.`;
-    return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
-  };
-
-  // Salva o número de telefone principal do usuário no Firestore
-  const handleSaveUserPhone = async () => {
-    if (!token) return;
-    setGlobalLoading(true);
-    try {
-      const clientRef = doc(db, "clientes", token);
-      await updateDoc(clientRef, { telefone: userPhoneInput.trim() });
-      showToast("Número de celular gravado com sucesso! 📱");
-    } catch (err: any) {
-      showToast("Erro ao gravar celular: " + err.message, true);
-    } finally {
-      setGlobalLoading(false);
-    }
-  };
-
   // Monitora o uso do teclado no documento para pausar bips/checagens de overdue se o usuário estiver digitando
   useEffect(() => {
     const handleKeyDown = () => {
@@ -508,13 +438,6 @@ export default function App() {
 
     return () => unsubscribe();
   }, [token]);
-
-  // Sincroniza o input do telefone principal quando os dados do cliente carregam
-  useEffect(() => {
-    if (clientData?.telefone) {
-      setUserPhoneInput(clientData.telefone);
-    }
-  }, [clientData?.telefone]);
 
   // 2. Sincronização em Tempo Real das Tarefas (Firestore collection query listener)
   useEffect(() => {
@@ -654,9 +577,6 @@ export default function App() {
             }).catch(err => console.warn("Erro ao enviar notificação via SW:", err));
           }
 
-          // 2.5 Notificação automática via WhatsApp/SMS se CallMeBot estiver configurado
-          sendSmsOrWhatsappAlert(t);
-
           // 3. Emite um som discreto de aviso (Bip)
           playBeep("overdue");
 
@@ -783,14 +703,12 @@ export default function App() {
         horario: taskTime || "12:00",
         recorrencia: taskRecurrence,
         status: "Pendente",
-        notificado: false,
-        telefoneDestinatario: recipientPhone.trim()
+        notificado: false
       };
 
       await setDoc(doc(db, "tarefas", taskId), newTask);
       
       setTaskName("");
-      setRecipientPhone("");
       resetDateTimeInputs();
       setTaskRecurrence("Nenhuma");
       setIsFormOpen(false);
@@ -866,7 +784,6 @@ export default function App() {
     setEditDate(t.data);
     setEditTime(t.horario);
     setEditRecurrence(t.recorrencia);
-    setEditRecipientPhone(t.telefoneDestinatario || "");
     setEditModalOpen(true);
   };
 
@@ -885,8 +802,7 @@ export default function App() {
         data: editDate,
         horario: editTime || "12:00",
         recorrencia: editRecurrence,
-        notificado: false, // Reseta notificação ao alterar prazo
-        telefoneDestinatario: editRecipientPhone.trim()
+        notificado: false // Reseta notificação ao alterar prazo
       });
       showToast("Tarefa atualizada!");
     } catch (err: any) {
@@ -1228,107 +1144,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* DEDICATED NOTIFICATIONS SETUP AND TEST BOX - WHATSAPP & SMS SETUP */}
-            <div className="bg-slate-900/30 border border-slate-800/60 p-4 rounded-2xl space-y-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-emerald-400 animate-pulse" />
-                  <span className="text-xs font-bold text-slate-200">Alertas de Celular (WhatsApp / SMS)</span>
-                </div>
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <button
-                    onClick={() => setIsGuideOpen(!isGuideOpen)}
-                    className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 hover:text-emerald-300 transition-all cursor-pointer bg-emerald-500/10 px-2.5 py-1.5 rounded-lg flex items-center gap-1"
-                  >
-                    {isGuideOpen ? "Fechar Instruções" : "Como Funciona? 📲"}
-                  </button>
-                </div>
-              </div>
 
-              {/* Main Phone Input Field */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row gap-2 items-end">
-                  <div className="flex-grow w-full space-y-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      Seu Número de Celular (com DDD)
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Ex: 11999999999"
-                        value={userPhoneInput}
-                        onChange={(e) => setUserPhoneInput(e.target.value)}
-                        className="w-full bg-slate-950/60 border border-slate-800 p-2.5 pl-9 text-slate-200 text-xs rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-                      />
-                      <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleSaveUserPhone}
-                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 px-4 text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-                  >
-                    Gravar Celular
-                  </button>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-2 items-end pt-2 border-t border-slate-800/40">
-                  <div className="flex-grow w-full space-y-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      Chave API CallMeBot (Opcional - para disparos automáticos)
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="password"
-                        placeholder="Insira sua Chave API do CallMeBot"
-                        value={callmebotApiKey}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setCallmebotApiKey(val);
-                          safeStorage.setItem("taskControlProCallmebotKey", val);
-                        }}
-                        className="w-full bg-slate-950/60 border border-slate-800 p-2.5 pl-9 text-slate-200 text-xs rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                      />
-                      <Key className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {isGuideOpen && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  className="bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-xs text-slate-300 space-y-2.5"
-                >
-                  <p className="text-slate-400 leading-relaxed">
-                    Você pode receber alertas de vencimento diretamente em qualquer celular de forma simples e gratuita de duas formas:
-                  </p>
-                  <div className="space-y-2 pl-2">
-                    <div className="flex items-start gap-2">
-                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
-                      <div>
-                        <strong className="text-slate-200">Envio Manual Direct-WhatsApp (Ilimitado e 100% Grátis):</strong> Cada compromisso terá um botão de WhatsApp dedicado. Ao vencer, o app emite o BIP sonoro e você pode clicar no botão para abrir o WhatsApp Web/App com a mensagem de lembrete prontinha preenchida para enviar a você mesmo ou ao destinatário!
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="bg-slate-800 text-slate-300 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
-                      <div>
-                        <strong className="text-slate-200">Envio Automático em Segundo Plano (WhatsApp Automatizado):</strong> Para que as notificações cheguem sozinhas sem precisar clicar em nada, basta usar a ferramenta gratuita <strong className="text-emerald-400">CallMeBot</strong>.
-                        <br />
-                        <span className="text-slate-400 block mt-1">
-                          Como obter sua chave grátis em 15 segundos:
-                          <ol className="list-decimal pl-4 mt-0.5 space-y-0.5">
-                            <li>Adicione o número <strong className="text-slate-300">+34 644 10 55 53</strong> no seu WhatsApp.</li>
-                            <li>Envie a mensagem: <code className="bg-slate-950 text-emerald-400 px-1 py-0.5 rounded font-mono">I allow callmebot to send me messages</code></li>
-                            <li>O robô enviará sua chave API de volta. Insira-a no campo acima para habilitar disparos silenciosos automáticos.</li>
-                          </ol>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </div>
             
             {/* ALERT BOX EXPIRE ADVISORY WARNING */}
             <AnimatePresence>
@@ -1535,21 +1351,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Campo opcional de celular para outra pessoa receber aviso */}
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Enviar aviso também para outro celular? (Opcional - com DDD)</label>
-                      <div className="relative flex items-center">
-                        <input
-                          id="input-task-recipient-phone"
-                          type="text"
-                          placeholder="Ex: 11988888888"
-                          value={recipientPhone}
-                          onChange={(e) => setRecipientPhone(e.target.value)}
-                          className="w-full bg-slate-950/60 border border-slate-800 p-3 pl-10 text-slate-100 text-sm placeholder-slate-600 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                        />
-                        <Phone className="w-4 h-4 text-slate-500 absolute left-3.5" />
-                      </div>
-                    </div>
+
 
                     <button
                       id="btn-add-task-submit"
@@ -1675,12 +1477,6 @@ export default function App() {
                               <Clock className="w-3.5 h-3.5 text-purple-400" />
                               {t.horario || "--:--"}
                             </span>
-                            {t.telefoneDestinatario && (
-                              <span className="flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 text-[10px] px-2 py-1 rounded-lg text-emerald-300">
-                                <Phone className="w-3 h-3 text-emerald-400" />
-                                Para: {t.telefoneDestinatario}
-                              </span>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -1715,32 +1511,6 @@ export default function App() {
                           </div>
                         ) : currentTab === "pendentes" ? (
                           <>
-                            {/* WhatsApp Direct principal */}
-                            {clientData?.telefone && (
-                              <a
-                                href={getWhatsappLink(clientData.telefone, t)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="w-9 h-9 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600 hover:text-white flex items-center justify-center rounded-xl transition-all"
-                                title="Enviar lembrete WhatsApp ao seu celular"
-                              >
-                                <MessageSquare className="w-4 h-4" />
-                              </a>
-                            )}
-
-                            {/* WhatsApp Direct extra */}
-                            {t.telefoneDestinatario && (
-                              <a
-                                href={getWhatsappLink(t.telefoneDestinatario, t)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="w-9 h-9 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-600 hover:text-white flex items-center justify-center rounded-xl transition-all"
-                                title={`Enviar lembrete WhatsApp para ${t.telefoneDestinatario}`}
-                              >
-                                <Phone className="w-4 h-4" />
-                              </a>
-                            )}
-
                             <button
                               onClick={() => openEditModal(t)}
                               className="inline-flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold uppercase tracking-wider rounded-xl border border-slate-700/60 transition-all cursor-pointer"
@@ -1900,20 +1670,7 @@ export default function App() {
                   </select>
                 </div>
 
-                {/* Campo opcional de celular para outra pessoa na edição */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Enviar aviso também para outro celular? (Opcional - com DDD)</label>
-                  <div className="relative flex items-center">
-                    <input
-                      type="text"
-                      placeholder="Ex: 11988888888"
-                      value={editRecipientPhone}
-                      onChange={(e) => setEditRecipientPhone(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 p-3 pl-10 text-slate-100 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <Phone className="w-4 h-4 text-slate-500 absolute left-3.5" />
-                  </div>
-                </div>
+
 
                 <div className="pt-2">
                   <button
@@ -1927,6 +1684,8 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+
       </AnimatePresence>
     </div>
   );
