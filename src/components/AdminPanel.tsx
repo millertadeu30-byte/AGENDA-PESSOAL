@@ -46,6 +46,7 @@ interface AdminClient {
   vencimento: string;
   status: string;
   diasRestantes: number;
+  acessos: number;
 }
 
 export default function AdminPanel({
@@ -118,7 +119,8 @@ export default function AdminPanel({
           nome: data.nome || "Usuário sem nome",
           vencimento: data.vencimento || "",
           status: statusCalculado,
-          diasRestantes
+          diasRestantes,
+          acessos: data.acessos || 0
         });
       });
 
@@ -200,6 +202,20 @@ export default function AdminPanel({
       setRefreshTrigger(prev => prev + 1);
     } catch (err: any) {
       showToast("Erro ao atualizar vencimento: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleResetAcessos = async (clientToken: string) => {
+    setGlobalLoading(true);
+    try {
+      const clientDocRef = doc(db, "clientes", clientToken);
+      await setDoc(clientDocRef, { acessos: 0 }, { merge: true });
+      showToast("Contador de acessos zerado com sucesso! 🔄");
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao zerar acessos: " + err.message, true);
     } finally {
       setGlobalLoading(false);
     }
@@ -390,6 +406,18 @@ export default function AdminPanel({
                         ⏳ Teste Grátis
                       </span>
                     )}
+
+                    {/* Contador de Acessos */}
+                    <span className="bg-slate-950 px-2.5 py-1 border border-slate-800 rounded-lg text-[10px] font-mono text-indigo-300 flex items-center gap-1.5 transition-all">
+                      <span>Acessos: <strong className="text-slate-100 font-bold">{c.acessos || 0}</strong></span>
+                      <button
+                        onClick={() => handleResetAcessos(c.token)}
+                        className="text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase transition-all flex items-center gap-0.5 cursor-pointer ml-1 border border-rose-500/20"
+                        title="Zerar contador de acessos"
+                      >
+                        Zerar
+                      </button>
+                    </span>
                   </div>
 
                   {/* Expiration and time metrics */}

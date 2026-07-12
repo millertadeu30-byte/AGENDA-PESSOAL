@@ -545,6 +545,28 @@ export default function App() {
     }
   }, [token, clientData?.pendentes?.length]);
 
+  // 3.6 Sincronização automática do contador de acessos do cliente (uma vez por sessão de navegação)
+  useEffect(() => {
+    if (!token || token === "8619") return;
+    
+    const sessionKey = `taskControlProAccessIncremented_${token}`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, "true");
+      
+      const docRef = doc(db, "clientes", token);
+      getDoc(docRef).then((docSnap) => {
+        if (docSnap.exists()) {
+          const currentAcessos = docSnap.data().acessos || 0;
+          updateDoc(docRef, { acessos: currentAcessos + 1 }).catch((err) => {
+            console.warn("[Acessos] Erro ao incrementar acessos no banco:", err);
+          });
+        }
+      }).catch((err) => {
+        console.warn("[Acessos] Erro ao obter cliente para incrementar acessos:", err);
+      });
+    }
+  }, [token]);
+
   // Loop de verificação periódica de tarefas vencidas (releitura a cada 40 segundos com controle de digitação)
   useEffect(() => {
     if (!token || token === "8619" || !clientData || !clientData.pendentes) return;
