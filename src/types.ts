@@ -4,10 +4,13 @@ export interface Tarefa {
   tarefa: string;
   data: string; // YYYY-MM-DD
   horario: string; // HH:MM
-  recorrencia: "Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual";
+  recorrencia: string;
   status: "Pendente" | "Realizada";
   notificado?: boolean;
   telefoneDestinatario?: string; // Celular do destinatário opcional
+  compartilhadoCom?: string[]; // Tokens de quem compartilha
+  criadorNome?: string; // Nome de quem criou a tarefa
+  tokenCriador?: string; // Token de quem criou a tarefa
 }
 
 export interface ClientData {
@@ -21,4 +24,6 @@ export interface ClientData {
   isAdmin?: boolean;
   fcmToken?: string;
   telefone?: string; // Celular principal do usuário
+  bloquearCompartilhamento?: boolean; // Bloqueio pelo administrador
+  compartilhamentosAceitos?: string[]; // Chaves aceitas de compartilhamento
 }

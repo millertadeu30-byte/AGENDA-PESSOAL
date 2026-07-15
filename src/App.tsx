@@ -25,7 +25,9 @@ import {
   Minimize2,
   Maximize2,
   Phone,
-  MessageSquare
+  MessageSquare,
+  Users,
+  Unlock
 } from "lucide-react";
 import { Tarefa, ClientData } from "./types";
 import AdminPanel from "./components/AdminPanel";
@@ -40,7 +42,8 @@ import {
   collection,
   query,
   where,
-  onSnapshot
+  onSnapshot,
+  getDocs
 } from "firebase/firestore";
 
 // Utilitário seguro para armazenamento (safeStorage) que evita falhas em iframes do Google Apps Script
@@ -128,11 +131,18 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [globalLoading, setGlobalLoading] = useState(false);
 
+  // Task sharing states
+  const [ownedTasks, setOwnedTasks] = useState<Tarefa[]>([]);
+  const [sharedTasksList, setSharedTasksList] = useState<Tarefa[]>([]);
+  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean }[]>([]);
+  const [taskSharedWith, setTaskSharedWith] = useState<string[]>([]);
+  const [editSharedWith, setEditSharedWith] = useState<string[]>([]);
+
   // New task inputs
   const [taskName, setTaskName] = useState("");
   const [taskDate, setTaskDate] = useState("");
   const [taskTime, setTaskTime] = useState("");
-  const [taskRecurrence, setTaskRecurrence] = useState<"Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual">("Nenhuma");
+  const [taskRecurrence, setTaskRecurrence] = useState<string>("Nenhuma");
 
   // Edit task modal inputs
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -141,7 +151,7 @@ export default function App() {
   const [editName, setEditName] = useState("");
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
-  const [editRecurrence, setEditRecurrence] = useState<"Nenhuma" | "1 Semana" | "15 Dias" | "Mensal" | "Anual">("Nenhuma");
+  const [editRecurrence, setEditRecurrence] = useState<string>("Nenhuma");
 
   // Toast notifications state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -430,7 +440,9 @@ export default function App() {
         aviso: avisoVencimento,
         isAdmin: false,
         fcmToken: data.fcmToken || "",
-        telefone: data.telefone || ""
+        telefone: data.telefone || "",
+        bloquearCompartilhamento: data.bloquearCompartilhamento || false,
+        compartilhamentosAceitos: data.compartilhamentosAceitos || []
       }));
     }, (error) => {
       console.error("Erro na escuta da conta:", error);
@@ -439,7 +451,34 @@ export default function App() {
     return () => unsubscribe();
   }, [token]);
 
-  // 2. Sincronização em Tempo Real das Tarefas (Firestore collection query listener)
+  // Effect to load list of clients for sharing dropdown
+  useEffect(() => {
+    if (!token || token === "8619") return;
+    
+    const fetchAllClients = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, "clientes"));
+        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean }[] = [];
+        querySnapshot.forEach((docSnap) => {
+          if (docSnap.id !== "8619" && docSnap.id !== token) {
+            const data = docSnap.data();
+            list.push({
+              token: docSnap.id,
+              nome: data.nome || "Sem Nome",
+              bloquearCompartilhamento: !!data.bloquearCompartilhamento
+            });
+          }
+        });
+        setAllClients(list);
+      } catch (err) {
+        console.error("Erro ao carregar lista de usuários para compartilhamento:", err);
+      }
+    };
+    
+    fetchAllClients();
+  }, [token]);
+
+  // 2. Sincronização em Tempo Real das Tarefas Próprias
   useEffect(() => {
     if (!token || token === "8619") return;
 
@@ -465,52 +504,81 @@ export default function App() {
       querySnapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() } as Tarefa);
       });
-
-      // Separar pendentes e históricos
-      const pendentes = list.filter(t => t.status === "Pendente");
-      const historico = list.filter(t => t.status === "Realizada");
-
-      // Ordenar pendentes por data e horário crescentes (antigas/vencidas no topo)
-      pendentes.sort((a, b) => {
-        const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
-        const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
-        return datetimeA - datetimeB;
-      });
-
-      // Ordenar o histórico de forma decrescente para exibir os mais recentes no topo
-      historico.sort((a, b) => {
-        const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
-        const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
-        return datetimeB - datetimeA;
-      });
-
-      setClientData(prev => {
-        if (!prev) {
-          return {
-            nome: "Usuário",
-            status: "Ativo",
-            vencimento: "",
-            diasRestantes: 0,
-            aviso: false,
-            pendentes,
-            historico
-          };
-        }
-        return {
-          ...prev,
-          pendentes,
-          historico
-        };
-      });
-
-      // Salva em localStorage para carregamento instantâneo no próximo boot
-      safeStorage.setItem("taskControlProTasksBackup", JSON.stringify(pendentes));
+      setOwnedTasks(list);
     }, (error) => {
-      console.error("Erro ao sincronizar tarefas:", error);
+      console.error("Erro ao sincronizar tarefas próprias:", error);
     });
 
     return () => unsubscribe();
   }, [token]);
+
+  // 2.2 Sincronização em Tempo Real das Tarefas Compartilhadas com o Usuário
+  useEffect(() => {
+    if (!token || token === "8619") return;
+
+    const q = query(collection(db, "tarefas"), where("compartilhadoCom", "array-contains", token));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const list: Tarefa[] = [];
+      querySnapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as Tarefa);
+      });
+      setSharedTasksList(list);
+    }, (error) => {
+      console.error("Erro ao sincronizar tarefas compartilhadas:", error);
+    });
+
+    return () => unsubscribe();
+  }, [token]);
+
+  // 2.3 Combinar e processar tarefas próprias e compartilhadas
+  useEffect(() => {
+    if (!token || token === "8619") return;
+
+    const allTasksMap = new Map<string, Tarefa>();
+    ownedTasks.forEach(t => allTasksMap.set(t.id, t));
+    sharedTasksList.forEach(t => allTasksMap.set(t.id, t));
+
+    const list = Array.from(allTasksMap.values());
+
+    // Separar pendentes e históricos
+    const pendentes = list.filter(t => t.status === "Pendente");
+    const historico = list.filter(t => t.status === "Realizada");
+
+    // Ordenar pendentes por data e horário crescentes (antigas/vencidas no topo)
+    pendentes.sort((a, b) => {
+      const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
+      const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
+      return datetimeA - datetimeB;
+    });
+
+    // Ordenar o histórico de forma decrescente para exibir os mais recentes no topo
+    historico.sort((a, b) => {
+      const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
+      const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
+      return datetimeB - datetimeA;
+    });
+
+    setClientData(prev => {
+      if (!prev) {
+        return {
+          nome: "Usuário",
+          status: "Ativo",
+          vencimento: "",
+          diasRestantes: 0,
+          aviso: false,
+          pendentes,
+          historico
+        };
+      }
+      return {
+        ...prev,
+        pendentes,
+        historico
+      };
+    });
+
+    safeStorage.setItem("taskControlProTasksBackup", JSON.stringify(pendentes));
+  }, [ownedTasks, sharedTasksList, token]);
 
   // 3. Sistema de Notificações 100% Client-Side e Registro do Service Worker
   useEffect(() => {
@@ -741,7 +809,10 @@ export default function App() {
         horario: taskTime || "12:00",
         recorrencia: taskRecurrence,
         status: "Pendente",
-        notificado: false
+        notificado: false,
+        compartilhadoCom: taskSharedWith,
+        criadorNome: clientData?.nome || "Outro Usuário",
+        tokenCriador: token
       };
 
       await setDoc(doc(db, "tarefas", taskId), newTask);
@@ -749,6 +820,7 @@ export default function App() {
       setTaskName("");
       resetDateTimeInputs();
       setTaskRecurrence("Nenhuma");
+      setTaskSharedWith([]);
       setIsFormOpen(false);
       showToast("Tarefa agendada com sucesso!");
       playBeep("click");
@@ -771,10 +843,29 @@ export default function App() {
       if (task.recorrencia && task.recorrencia !== "Nenhuma") {
         const currentDatetime = new Date(`${task.data}T${task.horario || "12:00"}`);
         
-        if (task.recorrencia === "1 Semana") currentDatetime.setDate(currentDatetime.getDate() + 7);
-        else if (task.recorrencia === "15 Dias") currentDatetime.setDate(currentDatetime.getDate() + 15);
-        else if (task.recorrencia === "Mensal") currentDatetime.setMonth(currentDatetime.getMonth() + 1);
-        else if (task.recorrencia === "Anual") currentDatetime.setFullYear(currentDatetime.getFullYear() + 1);
+        const cleanRec = task.recorrencia.trim().toLowerCase();
+        if (cleanRec === "1 semana") {
+          currentDatetime.setDate(currentDatetime.getDate() + 7);
+        } else if (cleanRec === "15 dias") {
+          currentDatetime.setDate(currentDatetime.getDate() + 15);
+        } else if (cleanRec === "mensal") {
+          currentDatetime.setMonth(currentDatetime.getMonth() + 1);
+        } else if (cleanRec === "anual") {
+          currentDatetime.setFullYear(currentDatetime.getFullYear() + 1);
+        } else {
+          // Extrai número de dias do padrão personalizado como "X Dias" ou "A cada X dias" ou apenas número
+          const match = cleanRec.match(/(\d+)/);
+          if (match) {
+            const days = parseInt(match[1], 10);
+            if (!isNaN(days) && days > 0) {
+              currentDatetime.setDate(currentDatetime.getDate() + days);
+            } else {
+              currentDatetime.setDate(currentDatetime.getDate() + 1);
+            }
+          } else {
+            currentDatetime.setDate(currentDatetime.getDate() + 1);
+          }
+        }
 
         const ano = currentDatetime.getFullYear();
         const mes = String(currentDatetime.getMonth() + 1).padStart(2, "0");
@@ -822,6 +913,7 @@ export default function App() {
     setEditDate(t.data);
     setEditTime(t.horario);
     setEditRecurrence(t.recorrencia);
+    setEditSharedWith(t.compartilhadoCom || []);
     setEditModalOpen(true);
   };
 
@@ -840,7 +932,10 @@ export default function App() {
         data: editDate,
         horario: editTime || "12:00",
         recorrencia: editRecurrence,
-        notificado: false // Reseta notificação ao alterar prazo
+        notificado: false, // Reseta notificação ao alterar prazo
+        compartilhadoCom: editSharedWith,
+        criadorNome: clientData?.nome || "Outro Usuário",
+        tokenCriador: token
       });
       showToast("Tarefa atualizada!");
     } catch (err: any) {
@@ -852,11 +947,45 @@ export default function App() {
 
   // FILTROS DE LISTA
   const getFilteredList = () => {
-    const list = currentTab === "pendentes" ? (clientData?.pendentes || []) : (clientData?.historico || []);
-    if (!searchQuery.trim()) return list;
+    let list = currentTab === "pendentes" ? (clientData?.pendentes || []) : (clientData?.historico || []);
+    
+    // Filtro de compartilhamento de tarefas (só exibe tarefas de criadores que aceitamos ou se for nossa própria tarefa)
+    if (!clientData?.isAdmin) {
+      list = list.filter(t => {
+        if (t.token === token) return true; // Nossa própria tarefa
+        // Tarefa compartilhada por outro usuário
+        return clientData?.compartilhamentosAceitos?.includes(t.token) ?? false;
+      });
+    }
+    
+    let filtered = list;
+    if (searchQuery.trim()) {
+      const queryLower = searchQuery.toLowerCase();
+      filtered = list.filter(t => {
+        const name = (t.tarefa || "").toLowerCase();
+        const rawDate = (t.data || "").toLowerCase();
+        const formattedDate = formatDateString(t.data).toLowerCase();
+        const time = (t.horario || "").toLowerCase();
+        const recurrence = (t.recorrencia || "").toLowerCase();
+        
+        return name.includes(queryLower) ||
+               rawDate.includes(queryLower) ||
+               formattedDate.includes(queryLower) ||
+               time.includes(queryLower) ||
+               recurrence.includes(queryLower);
+      });
+    }
 
-    const queryLower = searchQuery.toLowerCase();
-    return list.filter(t => t.tarefa.toLowerCase().includes(queryLower));
+    // Sempre ordena as tarefas pendentes para que as que vencem primeiro apareçam no topo
+    if (currentTab === "pendentes") {
+      filtered = [...filtered].sort((a, b) => {
+        const datetimeA = new Date(`${a.data}T${a.horario || "12:00"}`).getTime();
+        const datetimeB = new Date(`${b.data}T${b.horario || "12:00"}`).getTime();
+        return datetimeA - datetimeB;
+      });
+    }
+
+    return filtered;
   };
 
   const isTaskOverdue = (t: Tarefa) => {
@@ -873,6 +1002,18 @@ export default function App() {
     }
     return dt;
   };
+
+  // Find all unique users who shared tasks with me
+  const incomingSharersMap = new Map<string, string>();
+  sharedTasksList.forEach(t => {
+    if (t.token && t.token !== token) {
+      incomingSharersMap.set(t.token, t.criadorNome || "Outro Usuário");
+    }
+  });
+  const incomingSharers = Array.from(incomingSharersMap.entries()).map(([tok, name]) => ({
+    token: tok,
+    nome: name
+  }));
 
   // Contagem de tarefas vencidas (atrasadas)
   const overdueCount = clientData?.pendentes ? clientData.pendentes.filter(t => isTaskOverdue(t)).length : 0;
@@ -1179,8 +1320,68 @@ export default function App() {
                     </>
                   )}
                 </button>
+                <span className="text-slate-800 select-none hidden xs:inline">|</span>
+                <span className="flex items-center gap-1.5 text-slate-400 select-none">
+                  <ListCheck className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                  <span>Agendadas: <strong className="text-indigo-300 font-bold">{clientData?.pendentes?.length ?? 0}</strong></span>
+                </span>
               </div>
             </div>
+
+            {/* CHECKBOXES DE ACEITAÇÃO DE COMPARTILHAMENTO (Ticar de quem aceito) */}
+            {incomingSharers.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-slate-900/35 border border-slate-800/80 p-3.5 px-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
+              >
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                  <Users className="w-4 h-4 text-indigo-400" />
+                  <span>Aceitar tarefas compartilhadas de:</span>
+                </div>
+                <div className="flex flex-wrap gap-2.5">
+                  {incomingSharers.map((sharer) => {
+                    const isAccepted = clientData?.compartilhamentosAceitos?.includes(sharer.token);
+                    return (
+                      <button
+                        key={sharer.token}
+                        onClick={async () => {
+                          if (!clientData) return;
+                          const currentAceitos = clientData.compartilhamentosAceitos || [];
+                          let nextAceitos: string[];
+                          if (isAccepted) {
+                            nextAceitos = currentAceitos.filter(id => id !== sharer.token);
+                          } else {
+                            nextAceitos = [...currentAceitos, sharer.token];
+                          }
+                          try {
+                            await updateDoc(doc(db, "clientes", token), {
+                              compartilhamentosAceitos: nextAceitos
+                            });
+                            showToast(isAccepted ? "Compartilhamento ocultado! 👁️‍" : "Tarefas de " + sharer.nome + " adicionadas à sua agenda! 👥");
+                          } catch (err) {
+                            console.error("Erro ao atualizar aceitação de compartilhamento:", err);
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all border flex items-center gap-2 cursor-pointer ${
+                          isAccepted
+                            ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/20"
+                            : "bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-500 hover:text-slate-300"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!isAccepted}
+                          readOnly
+                          className="w-3.5 h-3.5 rounded border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer pointer-events-none bg-slate-950"
+                        />
+                        <span>{sharer.nome}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
 
 
             
@@ -1376,20 +1577,92 @@ export default function App() {
                         <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Repetir (Recorrência)</label>
                         <select
                           id="select-task-recurrence"
-                          value={taskRecurrence}
-                          onChange={(e) => setTaskRecurrence(e.target.value as any)}
-                          className="w-full bg-slate-950/60 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                          value={["Nenhuma", "1 Semana", "15 Dias", "Mensal", "Anual"].includes(taskRecurrence) ? taskRecurrence : "Personalizado"}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === "Personalizado") {
+                              setTaskRecurrence("30 Dias");
+                            } else {
+                              setTaskRecurrence(val);
+                            }
+                          }}
+                          className="w-full bg-slate-950/60 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all cursor-pointer"
                         >
                           <option value="Nenhuma">Não repetir</option>
                           <option value="1 Semana">Semanal</option>
                           <option value="15 Dias">A cada 15 dias</option>
                           <option value="Mensal">Mensal</option>
                           <option value="Anual">Anual</option>
+                          <option value="Personalizado">A cada X dias (Personalizado)...</option>
                         </select>
+                        
+                        {!["Nenhuma", "1 Semana", "15 Dias", "Mensal", "Anual"].includes(taskRecurrence) && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="flex gap-2 items-center mt-1 bg-slate-950/30 p-2.5 border border-slate-800/40 rounded-xl"
+                          >
+                            <span className="text-xs text-slate-400 whitespace-nowrap">A cada</span>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Ex: 5"
+                              value={parseInt(taskRecurrence.match(/\d+/)?.[0] || "30", 10)}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (!isNaN(val) && val > 0) {
+                                  setTaskRecurrence(`${val} Dias`);
+                                } else {
+                                  setTaskRecurrence("1 Dias");
+                                }
+                              }}
+                              className="w-20 bg-slate-950 border border-slate-800 p-1.5 text-slate-200 text-xs rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/20 text-center font-bold font-mono"
+                            />
+                            <span className="text-xs text-slate-400">dia(s)</span>
+                          </motion.div>
+                        )}
                       </div>
                     </div>
 
-
+                    {/* SELEÇÃO DE COMPARTILHAMENTO DE TAREFA */}
+                    {allClients.length > 0 && (
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Nomes):</label>
+                        {clientData?.bloquearCompartilhamento ? (
+                          <div className="text-xs text-rose-400 flex items-center gap-1.5 bg-rose-500/5 p-2 px-3.5 rounded-xl border border-rose-500/10">
+                            <Lock className="w-3.5 h-3.5" />
+                            <span>O administrador bloqueou seu privilégio de compartilhamento.</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {allClients.map((cli) => {
+                              const isSelected = taskSharedWith.includes(cli.token);
+                              return (
+                                <button
+                                  key={cli.token}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isSelected) {
+                                      setTaskSharedWith(prev => prev.filter(t => t !== cli.token));
+                                    } else {
+                                      setTaskSharedWith(prev => [...prev, cli.token]);
+                                    }
+                                  }}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                                    isSelected
+                                      ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/20"
+                                      : "bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-500 hover:text-slate-300"
+                                  }`}
+                                >
+                                  <span>{cli.nome}</span>
+                                  {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <button
                       id="btn-add-task-submit"
@@ -1515,6 +1788,28 @@ export default function App() {
                               <Clock className="w-3.5 h-3.5 text-purple-400" />
                               {t.horario || "--:--"}
                             </span>
+
+                            {/* Indicadores de Compartilhamento discretos e elegantes */}
+                            {t.token !== token ? (
+                              <span className="flex items-center gap-1.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-lg font-sans">
+                                <Users className="w-3.5 h-3.5 text-indigo-400" />
+                                De: <strong className="text-indigo-200">{t.criadorNome || "Outro Usuário"}</strong>
+                              </span>
+                            ) : (
+                              t.compartilhadoCom && t.compartilhadoCom.length > 0 && (() => {
+                                const sharedNames = t.compartilhadoCom
+                                  .map(tok => allClients.find(c => c.token === tok)?.nome)
+                                  .filter(Boolean)
+                                  .join(", ");
+                                if (!sharedNames) return null;
+                                return (
+                                  <span className="flex items-center gap-1.5 bg-slate-950/40 border border-slate-800/40 text-slate-400 px-2.5 py-1 rounded-lg font-sans" title={`Compartilhado com: ${sharedNames}`}>
+                                    <Users className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>Compartilhado com: <strong className="text-slate-300">{sharedNames}</strong></span>
+                                  </span>
+                                );
+                              })()
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1549,33 +1844,43 @@ export default function App() {
                           </div>
                         ) : currentTab === "pendentes" ? (
                           <>
-                            <button
-                              onClick={() => openEditModal(t)}
-                              className="inline-flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold uppercase tracking-wider rounded-xl border border-slate-700/60 transition-all cursor-pointer"
-                            >
-                              Editar
-                            </button>
+                            {t.token === token ? (
+                              <>
+                                <button
+                                  onClick={() => openEditModal(t)}
+                                  className="inline-flex items-center justify-center px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold uppercase tracking-wider rounded-xl border border-slate-700/60 transition-all cursor-pointer"
+                                >
+                                  Editar
+                                </button>
 
-                            <button
-                              onClick={() => setDeletingTaskId(t.id)}
-                              className="w-9 h-9 border border-rose-500/30 text-rose-400 hover:bg-rose-600 hover:text-white flex items-center justify-center rounded-xl transition-all cursor-pointer"
-                              title="Excluir"
-                            >
-                              <Trash className="w-4 h-4" />
-                            </button>
+                                <button
+                                  onClick={() => setDeletingTaskId(t.id)}
+                                  className="w-9 h-9 border border-rose-500/30 text-rose-400 hover:bg-rose-600 hover:text-white flex items-center justify-center rounded-xl transition-all cursor-pointer"
+                                  title="Excluir"
+                                >
+                                  <Trash className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-slate-500 text-xs font-semibold uppercase tracking-wider px-2 font-mono">
+                                Apenas Leitura
+                              </span>
+                            )}
                           </>
                         ) : (
                           <>
                             <span className="text-emerald-400 text-xs font-bold uppercase tracking-wider mr-2">
                               Concluída
                             </span>
-                            <button
-                              onClick={() => setDeletingTaskId(t.id)}
-                              className="w-9 h-9 border border-rose-500/30 text-rose-400 hover:bg-rose-600 hover:text-white flex items-center justify-center rounded-xl transition-all cursor-pointer"
-                              title="Excluir Definitivamente"
-                            >
-                              <Trash className="w-4 h-4" />
-                            </button>
+                            {t.token === token && (
+                              <button
+                                onClick={() => setDeletingTaskId(t.id)}
+                                className="w-9 h-9 border border-rose-500/30 text-rose-400 hover:bg-rose-600 hover:text-white flex items-center justify-center rounded-xl transition-all cursor-pointer"
+                                title="Excluir Definitivamente"
+                              >
+                                <Trash className="w-4 h-4" />
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -1693,22 +1998,94 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
+                 <div className="flex flex-col gap-1.5">
                   <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Repetir (Recorrência)</label>
                   <select
-                    value={editRecurrence}
-                    onChange={(e) => setEditRecurrence(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    value={["Nenhuma", "1 Semana", "15 Dias", "Mensal", "Anual"].includes(editRecurrence) ? editRecurrence : "Personalizado"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "Personalizado") {
+                        setEditRecurrence("30 Dias");
+                      } else {
+                        setEditRecurrence(val);
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 p-3 text-slate-200 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                   >
                     <option value="Nenhuma">Não repetir</option>
                     <option value="1 Semana">Semanal</option>
                     <option value="15 Dias">A cada 15 dias</option>
                     <option value="Mensal">Mensal</option>
                     <option value="Anual">Anual</option>
+                    <option value="Personalizado">A cada X dias (Personalizado)...</option>
                   </select>
+                  
+                  {!["Nenhuma", "1 Semana", "15 Dias", "Mensal", "Anual"].includes(editRecurrence) && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="flex gap-2 items-center mt-1 bg-slate-950/30 p-2.5 border border-slate-800/40 rounded-xl"
+                    >
+                      <span className="text-xs text-slate-400 whitespace-nowrap">A cada</span>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Ex: 5"
+                        value={parseInt(editRecurrence.match(/\d+/)?.[0] || "30", 10)}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!isNaN(val) && val > 0) {
+                            setEditRecurrence(`${val} Dias`);
+                          } else {
+                            setEditRecurrence("1 Dias");
+                          }
+                        }}
+                        className="w-20 bg-slate-950 border border-slate-800 p-1.5 text-slate-200 text-xs rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/20 text-center font-bold font-mono"
+                      />
+                      <span className="text-xs text-slate-400">dia(s)</span>
+                    </motion.div>
+                  )}
                 </div>
 
-
+                {/* EDIT COMPARTILHAMENTO */}
+                {allClients.length > 0 && (
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Nomes):</label>
+                    {clientData?.bloquearCompartilhamento ? (
+                      <div className="text-xs text-rose-400 flex items-center gap-1.5 bg-rose-500/5 p-2 px-3.5 rounded-xl border border-rose-500/10">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>O administrador bloqueou seu privilégio de compartilhamento.</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allClients.map((cli) => {
+                          const isSelected = editSharedWith.includes(cli.token);
+                          return (
+                            <button
+                              key={cli.token}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setEditSharedWith(prev => prev.filter(t => t !== cli.token));
+                                } else {
+                                  setEditSharedWith(prev => [...prev, cli.token]);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                                isSelected
+                                  ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/20"
+                                  : "bg-slate-950/60 border-slate-800 hover:border-slate-700 text-slate-500 hover:text-slate-300"
+                              }`}
+                            >
+                              <span>{cli.nome}</span>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="pt-2">
                   <button

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Users,
   Unlock,
+  Lock,
   Calendar,
   Trash,
   Search,
@@ -47,6 +48,7 @@ interface AdminClient {
   status: string;
   diasRestantes: number;
   acessos: number;
+  bloquearCompartilhamento?: boolean;
 }
 
 export default function AdminPanel({
@@ -120,7 +122,8 @@ export default function AdminPanel({
           vencimento: data.vencimento || "",
           status: statusCalculado,
           diasRestantes,
-          acessos: data.acessos || 0
+          acessos: data.acessos || 0,
+          bloquearCompartilhamento: data.bloquearCompartilhamento || false
         });
       });
 
@@ -216,6 +219,20 @@ export default function AdminPanel({
       setRefreshTrigger(prev => prev + 1);
     } catch (err: any) {
       showToast("Erro ao zerar acessos: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleToggleLockCompartilhamento = async (clientToken: string, currentValue: boolean) => {
+    setGlobalLoading(true);
+    try {
+      const clientDocRef = doc(db, "clientes", clientToken);
+      await setDoc(clientDocRef, { bloquearCompartilhamento: !currentValue }, { merge: true });
+      showToast(!currentValue ? "Compartilhamento bloqueado para este usuário! 🔒" : "Compartilhamento liberado para este usuário! 🔓");
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao alterar bloqueio de compartilhamento: " + err.message, true);
     } finally {
       setGlobalLoading(false);
     }
@@ -380,6 +397,29 @@ export default function AdminPanel({
                 <div className="flex-grow min-w-0">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="text-base font-semibold text-slate-100">{c.nome}</span>
+                    
+                    {/* Lock/Unlock Sharing */}
+                    <button
+                      onClick={() => handleToggleLockCompartilhamento(c.token, !!c.bloquearCompartilhamento)}
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-mono transition-all border cursor-pointer ${
+                        c.bloquearCompartilhamento
+                          ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
+                          : "bg-slate-950 hover:bg-slate-900 text-indigo-300 border-slate-800"
+                      }`}
+                      title={c.bloquearCompartilhamento ? "Compartilhamento Bloqueado (Clique para Desbloquear)" : "Compartilhamento Ativo (Clique para Bloquear)"}
+                    >
+                      {c.bloquearCompartilhamento ? (
+                        <>
+                          <Lock className="w-3 h-3 text-rose-400" />
+                          <span>Bloqueado</span>
+                        </>
+                      ) : (
+                        <>
+                          <Unlock className="w-3 h-3 text-emerald-400" />
+                          <span>Compartilhando</span>
+                        </>
+                      )}
+                    </button>
                     
                     {/* Copyable Access Key */}
                     <button
