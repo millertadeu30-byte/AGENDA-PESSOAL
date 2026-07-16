@@ -134,7 +134,7 @@ export default function App() {
   // Task sharing states
   const [ownedTasks, setOwnedTasks] = useState<Tarefa[]>([]);
   const [sharedTasksList, setSharedTasksList] = useState<Tarefa[]>([]);
-  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean }[]>([]);
+  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string }[]>([]);
   const [taskSharedWith, setTaskSharedWith] = useState<string[]>([]);
   const [editSharedWith, setEditSharedWith] = useState<string[]>([]);
 
@@ -442,7 +442,9 @@ export default function App() {
         fcmToken: data.fcmToken || "",
         telefone: data.telefone || "",
         bloquearCompartilhamento: data.bloquearCompartilhamento || false,
-        compartilhamentosAceitos: data.compartilhamentosAceitos || []
+        compartilhamentosAceitos: data.compartilhamentosAceitos || [],
+        grupo1: data.grupo1 || "",
+        grupo2: data.grupo2 || ""
       }));
     }, (error) => {
       console.error("Erro na escuta da conta:", error);
@@ -458,14 +460,16 @@ export default function App() {
     const fetchAllClients = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, "clientes"));
-        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean }[] = [];
+        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string }[] = [];
         querySnapshot.forEach((docSnap) => {
           if (docSnap.id !== "8619" && docSnap.id !== token) {
             const data = docSnap.data();
             list.push({
               token: docSnap.id,
               nome: data.nome || "Sem Nome",
-              bloquearCompartilhamento: !!data.bloquearCompartilhamento
+              bloquearCompartilhamento: !!data.bloquearCompartilhamento,
+              grupo1: data.grupo1 || "",
+              grupo2: data.grupo2 || ""
             });
           }
         });
@@ -1625,17 +1629,33 @@ export default function App() {
                     </div>
 
                     {/* SELEÇÃO DE COMPARTILHAMENTO DE TAREFA */}
-                    {allClients.length > 0 && (
-                      <div className="flex flex-col gap-1.5 pt-1">
-                        <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Nomes):</label>
-                        {clientData?.bloquearCompartilhamento ? (
-                          <div className="text-xs text-rose-400 flex items-center gap-1.5 bg-rose-500/5 p-2 px-3.5 rounded-xl border border-rose-500/10">
-                            <Lock className="w-3.5 h-3.5" />
-                            <span>O administrador bloqueou seu privilégio de compartilhamento.</span>
-                          </div>
-                        ) : (
+                    {(() => {
+                      const sharedWithUs = allClients.filter(cli => {
+                        const gMe1 = clientData?.grupo1?.trim();
+                        const gMe2 = clientData?.grupo2?.trim();
+                        const gMe3 = clientData?.grupo3?.trim();
+                        const gMe4 = clientData?.grupo4?.trim();
+                        const gCli1 = cli.grupo1?.trim();
+                        const gCli2 = cli.grupo2?.trim();
+                        const gCli3 = cli.grupo3?.trim();
+                        const gCli4 = cli.grupo4?.trim();
+
+                        if (!gMe1 && !gMe2 && !gMe3 && !gMe4) return false;
+                        if (!gCli1 && !gCli2 && !gCli3 && !gCli4) return false;
+
+                        const myGroups = [gMe1, gMe2, gMe3, gMe4].filter(Boolean);
+                        const cliGroups = [gCli1, gCli2, gCli3, gCli4].filter(Boolean);
+
+                        return myGroups.some(g => cliGroups.includes(g));
+                      });
+
+                      if (sharedWithUs.length === 0) return null;
+
+                      return (
+                        <div className="flex flex-col gap-1.5 pt-1">
+                          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Grupo comum):</label>
                           <div className="flex flex-wrap gap-2">
-                            {allClients.map((cli) => {
+                            {sharedWithUs.map((cli) => {
                               const isSelected = taskSharedWith.includes(cli.token);
                               return (
                                 <button
@@ -1660,9 +1680,9 @@ export default function App() {
                               );
                             })}
                           </div>
-                        )}
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
 
                     <button
                       id="btn-add-task-submit"
@@ -2048,17 +2068,33 @@ export default function App() {
                 </div>
 
                 {/* EDIT COMPARTILHAMENTO */}
-                {allClients.length > 0 && (
-                  <div className="flex flex-col gap-1.5 pt-1">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Nomes):</label>
-                    {clientData?.bloquearCompartilhamento ? (
-                      <div className="text-xs text-rose-400 flex items-center gap-1.5 bg-rose-500/5 p-2 px-3.5 rounded-xl border border-rose-500/10">
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>O administrador bloqueou seu privilégio de compartilhamento.</span>
-                      </div>
-                    ) : (
+                {(() => {
+                  const sharedWithUs = allClients.filter(cli => {
+                    const gMe1 = clientData?.grupo1?.trim();
+                    const gMe2 = clientData?.grupo2?.trim();
+                    const gMe3 = clientData?.grupo3?.trim();
+                    const gMe4 = clientData?.grupo4?.trim();
+                    const gCli1 = cli.grupo1?.trim();
+                    const gCli2 = cli.grupo2?.trim();
+                    const gCli3 = cli.grupo3?.trim();
+                    const gCli4 = cli.grupo4?.trim();
+
+                    if (!gMe1 && !gMe2 && !gMe3 && !gMe4) return false;
+                    if (!gCli1 && !gCli2 && !gCli3 && !gCli4) return false;
+
+                    const myGroups = [gMe1, gMe2, gMe3, gMe4].filter(Boolean);
+                    const cliGroups = [gCli1, gCli2, gCli3, gCli4].filter(Boolean);
+
+                    return myGroups.some(g => cliGroups.includes(g));
+                  });
+
+                  if (sharedWithUs.length === 0) return null;
+
+                  return (
+                    <div className="flex flex-col gap-1.5 pt-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Grupo comum):</label>
                       <div className="flex flex-wrap gap-2">
-                        {allClients.map((cli) => {
+                        {sharedWithUs.map((cli) => {
                           const isSelected = editSharedWith.includes(cli.token);
                           return (
                             <button
@@ -2083,9 +2119,9 @@ export default function App() {
                           );
                         })}
                       </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  );
+                })()}
 
                 <div className="pt-2">
                   <button

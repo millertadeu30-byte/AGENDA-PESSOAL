@@ -19,7 +19,8 @@ import {
   Copy,
   Check,
   Bell,
-  ExternalLink
+  ExternalLink,
+  Save
 } from "lucide-react";
 import { db } from "../firebase";
 import {
@@ -49,6 +50,10 @@ interface AdminClient {
   diasRestantes: number;
   acessos: number;
   bloquearCompartilhamento?: boolean;
+  grupo1?: string;
+  grupo2?: string;
+  grupo3?: string;
+  grupo4?: string;
 }
 
 export default function AdminPanel({
@@ -58,6 +63,7 @@ export default function AdminPanel({
   setGlobalLoading
 }: AdminPanelProps) {
   const [clients, setClients] = useState<AdminClient[]>([]);
+  const [editedGroups, setEditedGroups] = useState<Record<string, { grupo1: string; grupo2: string; grupo3: string; grupo4: string }>>({});
   const [search, setSearch] = useState("");
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [deletingClientToken, setDeletingClientToken] = useState<string | null>(null);
@@ -73,6 +79,8 @@ export default function AdminPanel({
     return d.toISOString().split("T")[0];
   });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [editingToken, setEditingToken] = useState<string | null>(null);
+  const [tempTokenValue, setTempTokenValue] = useState("");
 
   // Auto generate a random 4-digit key
   const handleGenerateKeySuggestion = () => {
@@ -123,12 +131,27 @@ export default function AdminPanel({
           status: statusCalculado,
           diasRestantes,
           acessos: data.acessos || 0,
-          bloquearCompartilhamento: data.bloquearCompartilhamento || false
+          bloquearCompartilhamento: data.bloquearCompartilhamento || false,
+          grupo1: data.grupo1 || "",
+          grupo2: data.grupo2 || "",
+          grupo3: data.grupo3 || "",
+          grupo4: data.grupo4 || ""
         });
       });
 
       // Ordenar por nome
       list.sort((a, b) => a.nome.localeCompare(b.nome));
+      
+      const initialGroups: Record<string, { grupo1: string; grupo2: string; grupo3: string; grupo4: string }> = {};
+      list.forEach((c) => {
+        initialGroups[c.token] = {
+          grupo1: c.grupo1 || "",
+          grupo2: c.grupo2 || "",
+          grupo3: c.grupo3 || "",
+          grupo4: c.grupo4 || ""
+        };
+      });
+      setEditedGroups(initialGroups);
       setClients(list);
     } catch (err: any) {
       showToast("Erro ao conectar ao Firestore: " + err.message, true);
@@ -224,15 +247,110 @@ export default function AdminPanel({
     }
   };
 
-  const handleToggleLockCompartilhamento = async (clientToken: string, currentValue: boolean) => {
+  const handleUpdateClientToken = async (oldToken: string, newTokenRaw: string) => {
+    const newToken = newTokenRaw.trim();
+    if (!newToken) {
+      showToast("A chave de acesso não pode ser vazia!", true);
+      return;
+    }
+    if (newToken === oldToken) return;
+
     setGlobalLoading(true);
     try {
-      const clientDocRef = doc(db, "clientes", clientToken);
-      await setDoc(clientDocRef, { bloquearCompartilhamento: !currentValue }, { merge: true });
-      showToast(!currentValue ? "Compartilhamento bloqueado para este usuário! 🔒" : "Compartilhamento liberado para este usuário! 🔓");
+      // 1. Check if the new token already exists
+      const targetDocRef = doc(db, "clientes", newToken);
+      const targetDocSnap = await getDoc(targetDocRef);
+      if (targetDocSnap.exists()) {
+        showToast("Esta chave de acesso já está em uso por outro usuário!", true);
+        return;
+      }
+
+      // 2. Fetch the old client document
+      const sourceDocRef = doc(db, "clientes", oldToken);
+      const sourceDocSnap = await getDoc(sourceDocRef);
+      if (!sourceDocSnap.exists()) {
+        showToast("Documento de origem não encontrado!", true);
+        return;
+      }
+      const clientData = sourceDocSnap.data();
+
+      // 3. Create the new client document with identical data
+      await setDoc(targetDocRef, clientData);
+
+      // 4. Update all tasks associated with this old token in 'tarefas'
+      const qOwned = query(collection(db, "tarefas"), where("token", "==", oldToken));
+      const ownedSnap = await getDocs(qOwned);
+      const updatePromises: Promise<any>[] = [];
+      ownedSnap.forEach((taskDoc) => {
+        const ref = doc(db, "tarefas", taskDoc.id);
+        const updateObj: any = { token: newToken };
+        if (taskDoc.data().tokenCriador === oldToken) {
+          updateObj.tokenCriador = newToken;
+        }
+        updatePromises.push(setDoc(ref, updateObj, { merge: true }));
+      });
+
+      const qCreated = query(collection(db, "tarefas"), where("tokenCriador", "==", oldToken));
+      const createdSnap = await getDocs(qCreated);
+      createdSnap.forEach((taskDoc) => {
+        if (taskDoc.data().token !== oldToken) {
+          const ref = doc(db, "tarefas", taskDoc.id);
+          updatePromises.push(setDoc(ref, { tokenCriador: newToken }, { merge: true }));
+        }
+      });
+
+      const qShared = query(collection(db, "tarefas"), where("compartilhadoCom", "array-contains", oldToken));
+      const sharedSnap = await getDocs(qShared);
+      sharedSnap.forEach((taskDoc) => {
+        const ref = doc(db, "tarefas", taskDoc.id);
+        const currentShared: string[] = taskDoc.data().compartilhadoCom || [];
+        const newShared = currentShared.map(t => t === oldToken ? newToken : t);
+        updatePromises.push(setDoc(ref, { compartilhadoCom: newShared }, { merge: true }));
+      });
+
+      await Promise.all(updatePromises);
+
+      // 5. Delete the old client document
+      await deleteDoc(sourceDocRef);
+
+      showToast(`Chave de acesso atualizada de "${oldToken}" para "${newToken}"! 🔑`);
       setRefreshTrigger(prev => prev + 1);
     } catch (err: any) {
-      showToast("Erro ao alterar bloqueio de compartilhamento: " + err.message, true);
+      showToast("Erro ao alterar chave de acesso: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleUpdateGroupLocal = (clientToken: string, field: "grupo1" | "grupo2" | "grupo3" | "grupo4", value: string) => {
+    setEditedGroups(prev => ({
+      ...prev,
+      [clientToken]: {
+        ...prev[clientToken],
+        [field]: value
+      }
+    }));
+  };
+
+  const handleSavePanelGroups = async () => {
+    setGlobalLoading(true);
+    try {
+      const savePromises = Object.entries(editedGroups).map(async ([clientToken, groups]) => {
+        const clientDocRef = doc(db, "clientes", clientToken);
+        const typedGroups = groups as { grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string };
+        await setDoc(clientDocRef, {
+          grupo1: (typedGroups.grupo1 || "").trim(),
+          grupo2: (typedGroups.grupo2 || "").trim(),
+          grupo3: (typedGroups.grupo3 || "").trim(),
+          grupo4: (typedGroups.grupo4 || "").trim()
+        }, { merge: true });
+      });
+
+      await Promise.all(savePromises);
+      showToast("Configurações dos grupos salvas com sucesso! 💾👥");
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao salvar grupos: " + err.message, true);
     } finally {
       setGlobalLoading(false);
     }
@@ -373,6 +491,14 @@ export default function AdminPanel({
         >
           <RefreshCw className="w-3.5 h-3.5" /> Atualizar Lista
         </button>
+
+        <button
+          onClick={handleSavePanelGroups}
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-indigo-500/15 border border-indigo-500/30"
+          title="Salvar todas as configurações de grupos de todos os usuários de uma só vez"
+        >
+          <Save className="w-3.5 h-3.5" /> Salvar Grupos
+        </button>
       </div>
 
       {/* Clients List Cards */}
@@ -398,39 +524,108 @@ export default function AdminPanel({
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="text-base font-semibold text-slate-100">{c.nome}</span>
                     
-                    {/* Lock/Unlock Sharing */}
-                    <button
-                      onClick={() => handleToggleLockCompartilhamento(c.token, !!c.bloquearCompartilhamento)}
-                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-mono transition-all border cursor-pointer ${
-                        c.bloquearCompartilhamento
-                          ? "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/20"
-                          : "bg-slate-950 hover:bg-slate-900 text-indigo-300 border-slate-800"
-                      }`}
-                      title={c.bloquearCompartilhamento ? "Compartilhamento Bloqueado (Clique para Desbloquear)" : "Compartilhamento Ativo (Clique para Bloquear)"}
-                    >
-                      {c.bloquearCompartilhamento ? (
-                        <>
-                          <Lock className="w-3 h-3 text-rose-400" />
-                          <span>Bloqueado</span>
-                        </>
-                      ) : (
-                        <>
-                          <Unlock className="w-3 h-3 text-emerald-400" />
-                          <span>Compartilhando</span>
-                        </>
-                      )}
-                    </button>
+                    {/* Campos de Grupo de Compartilhamento */}
+                    <div className="inline-flex items-center gap-1 bg-slate-950 px-2.5 py-1 border border-slate-800 rounded-lg text-[10px] font-sans text-slate-300">
+                      <Users className="w-3.5 h-3.5 text-indigo-400 mr-0.5" />
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mr-1">Grupos:</span>
+                      <input
+                        type="text"
+                        placeholder="Nenhum"
+                        value={editedGroups[c.token]?.grupo1 || ""}
+                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo1", e.target.value)}
+                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
+                        title="ID do Grupo 1"
+                      />
+                      <span className="text-slate-800 font-bold">|</span>
+                      <input
+                        type="text"
+                        placeholder="Nenhum"
+                        value={editedGroups[c.token]?.grupo2 || ""}
+                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo2", e.target.value)}
+                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
+                        title="ID do Grupo 2"
+                      />
+                      <span className="text-slate-800 font-bold">|</span>
+                      <input
+                        type="text"
+                        placeholder="Nenhum"
+                        value={editedGroups[c.token]?.grupo3 || ""}
+                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo3", e.target.value)}
+                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
+                        title="ID do Grupo 3"
+                      />
+                      <span className="text-slate-800 font-bold">|</span>
+                      <input
+                        type="text"
+                        placeholder="Nenhum"
+                        value={editedGroups[c.token]?.grupo4 || ""}
+                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo4", e.target.value)}
+                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
+                        title="ID do Grupo 4"
+                      />
+                    </div>
                     
-                    {/* Copyable Access Key */}
-                    <button
-                      onClick={() => copyToClipboard(c.token)}
-                      className="inline-flex items-center gap-1.5 bg-slate-950 px-2 py-1 border border-slate-800 hover:border-indigo-500 hover:bg-slate-900 rounded-lg text-[10px] font-mono text-indigo-300 transition-all cursor-pointer"
-                      title="Clique para copiar a chave de acesso"
-                    >
-                      <Key className="w-3 h-3 text-indigo-400" />
-                      Chave: <span className="font-bold text-slate-200">{c.token}</span>
-                      {copiedKey === c.token ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-60" />}
-                    </button>
+                     {/* Copyable & Editable Access Key */}
+                     {editingToken === c.token ? (
+                       <div className="inline-flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 border border-indigo-500 rounded-lg text-[10px] font-mono">
+                         <Key className="w-3 h-3 text-indigo-400" />
+                         <span className="text-slate-400 font-bold">Chave:</span>
+                         <input
+                           type="text"
+                           value={tempTokenValue}
+                           onChange={(e) => setTempTokenValue(e.target.value)}
+                           className="w-16 bg-slate-900 text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none"
+                           autoFocus
+                           onKeyDown={(e) => {
+                             if (e.key === "Enter") {
+                               handleUpdateClientToken(c.token, tempTokenValue);
+                               setEditingToken(null);
+                             } else if (e.key === "Escape") {
+                               setEditingToken(null);
+                             }
+                           }}
+                         />
+                         <button
+                           onClick={() => {
+                             handleUpdateClientToken(c.token, tempTokenValue);
+                             setEditingToken(null);
+                           }}
+                           className="p-0.5 hover:text-emerald-400 text-slate-400 transition-colors cursor-pointer"
+                           title="Confirmar alteração de chave"
+                         >
+                           <Check className="w-3.5 h-3.5 text-emerald-400" />
+                         </button>
+                         <button
+                           onClick={() => setEditingToken(null)}
+                           className="p-0.5 hover:text-rose-400 text-slate-400 transition-colors cursor-pointer"
+                           title="Cancelar"
+                         >
+                           <X className="w-3.5 h-3.5 text-rose-400" />
+                         </button>
+                       </div>
+                     ) : (
+                       <div className="inline-flex items-center bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
+                         <button
+                           onClick={() => copyToClipboard(c.token)}
+                           className="inline-flex items-center gap-1.5 px-2 py-1 hover:bg-slate-900 text-[10px] font-mono text-indigo-300 transition-all cursor-pointer border-r border-slate-800/60"
+                           title="Clique para copiar a chave de acesso"
+                         >
+                           <Key className="w-3 h-3 text-indigo-400" />
+                           Chave: <span className="font-bold text-slate-200">{c.token}</span>
+                           {copiedKey === c.token ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-60" />}
+                         </button>
+                         <button
+                           onClick={() => {
+                             setEditingToken(c.token);
+                             setTempTokenValue(c.token);
+                           }}
+                           className="px-2 py-1 hover:bg-indigo-600/20 text-indigo-400 hover:text-indigo-300 transition-all text-[10px] font-sans font-bold cursor-pointer"
+                           title="Clique para editar esta chave de acesso"
+                         >
+                           Alterar
+                         </button>
+                       </div>
+                     )}
 
                     {/* Status badges */}
                     {isPayer ? (

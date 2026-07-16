@@ -26,4 +26,8 @@ export interface ClientData {
   telefone?: string; // Celular principal do usuário
   bloquearCompartilhamento?: boolean; // Bloqueio pelo administrador
   compartilhamentosAceitos?: string[]; // Chaves aceitas de compartilhamento
+  grupo1?: string; // Primeiro grupo para compartilhamento
+  grupo2?: string; // Segundo grupo para compartilhamento
+  grupo3?: string; // Terceiro grupo para compartilhamento
+  grupo4?: string; // Quarto grupo para compartilhamento
 }
