@@ -1651,10 +1651,37 @@ export default function App() {
 
                       if (sharedWithUs.length === 0) return null;
 
+                      const allSelected = sharedWithUs.length > 0 && sharedWithUs.every(cli => taskSharedWith.includes(cli.token));
+
                       return (
                         <div className="flex flex-col gap-1.5 pt-1">
                           <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Grupo comum):</label>
                           <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (allSelected) {
+                                  // Deselect all shared group clients
+                                  setTaskSharedWith(prev => prev.filter(t => !sharedWithUs.some(cli => cli.token === t)));
+                                } else {
+                                  // Select all shared group clients
+                                  setTaskSharedWith(prev => {
+                                    const combined = [...prev, ...sharedWithUs.map(cli => cli.token)];
+                                    return Array.from(new Set(combined));
+                                  });
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer uppercase ${
+                                allSelected
+                                  ? "bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-700"
+                                  : "bg-slate-900 border-indigo-500/40 text-indigo-300 hover:bg-indigo-950 hover:border-indigo-400"
+                              }`}
+                            >
+                              <Users className="w-3.5 h-3.5" />
+                              <span>Todos</span>
+                              {allSelected && <Check className="w-3.5 h-3.5 text-white" />}
+                            </button>
+
                             {sharedWithUs.map((cli) => {
                               const isSelected = taskSharedWith.includes(cli.token);
                               return (
@@ -2090,10 +2117,37 @@ export default function App() {
 
                   if (sharedWithUs.length === 0) return null;
 
+                  const allSelected = sharedWithUs.length > 0 && sharedWithUs.every(cli => editSharedWith.includes(cli.token));
+
                   return (
                     <div className="flex flex-col gap-1.5 pt-1">
                       <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Compartilhar com (Grupo comum):</label>
                       <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (allSelected) {
+                              // Deselect all shared group clients
+                              setEditSharedWith(prev => prev.filter(t => !sharedWithUs.some(cli => cli.token === t)));
+                            } else {
+                              // Select all shared group clients
+                              setEditSharedWith(prev => {
+                                const combined = [...prev, ...sharedWithUs.map(cli => cli.token)];
+                                return Array.from(new Set(combined));
+                              });
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer uppercase ${
+                            allSelected
+                              ? "bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-700"
+                              : "bg-slate-900 border-indigo-500/40 text-indigo-300 hover:bg-indigo-950 hover:border-indigo-400"
+                          }`}
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Todos</span>
+                          {allSelected && <Check className="w-3.5 h-3.5 text-white" />}
+                        </button>
+
                         {sharedWithUs.map((cli) => {
                           const isSelected = editSharedWith.includes(cli.token);
                           return (
