@@ -134,7 +134,7 @@ export default function App() {
   // Task sharing states
   const [ownedTasks, setOwnedTasks] = useState<Tarefa[]>([]);
   const [sharedTasksList, setSharedTasksList] = useState<Tarefa[]>([]);
-  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string }[]>([]);
+  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[]>([]);
   const [taskSharedWith, setTaskSharedWith] = useState<string[]>([]);
   const [editSharedWith, setEditSharedWith] = useState<string[]>([]);
 
@@ -380,6 +380,43 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Monitora interações do usuário para detectar inatividade e auto-atualizar
+  const lastUserActivityRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    const updateActivity = () => {
+      lastUserActivityRef.current = Date.now();
+    };
+
+    const events = ["mousemove", "keydown", "mousedown", "touchstart", "scroll", "click"];
+    events.forEach(event => window.addEventListener(event, updateActivity, { passive: true }));
+
+    return () => {
+      events.forEach(event => window.removeEventListener(event, updateActivity));
+    };
+  }, []);
+
+  // Loop de atualização automática a cada 30 segundos de inatividade
+  useEffect(() => {
+    if (!token || token === "8619") return;
+
+    const intervalId = setInterval(() => {
+      // Não atualiza se houver modais de criação ou edição abertos para não perder dados digitados
+      if (isFormOpen || editModalOpen) {
+        lastUserActivityRef.current = Date.now(); // Postega a atualização
+        return;
+      }
+
+      const timeSinceLastActivity = Date.now() - lastUserActivityRef.current;
+      if (timeSinceLastActivity >= 30000) {
+        console.log("[Auto-Refresh] Inatividade por mais de 30s detectada. Recarregando página para garantir sincronização...");
+        window.location.reload();
+      }
+    }, 5000);
+
+    return () => clearInterval(intervalId);
+  }, [token, isFormOpen, editModalOpen]);
+
   // 1. Sincronização em Tempo Real do Status da Conta (Firestore doc listener)
   useEffect(() => {
     if (!token) return;
@@ -460,7 +497,7 @@ export default function App() {
     const fetchAllClients = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, "clientes"));
-        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string }[] = [];
+        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[] = [];
         querySnapshot.forEach((docSnap) => {
           if (docSnap.id !== "8619" && docSnap.id !== token) {
             const data = docSnap.data();
@@ -469,7 +506,9 @@ export default function App() {
               nome: data.nome || "Sem Nome",
               bloquearCompartilhamento: !!data.bloquearCompartilhamento,
               grupo1: data.grupo1 || "",
-              grupo2: data.grupo2 || ""
+              grupo2: data.grupo2 || "",
+              grupo3: data.grupo3 || "",
+              grupo4: data.grupo4 || ""
             });
           }
         });
