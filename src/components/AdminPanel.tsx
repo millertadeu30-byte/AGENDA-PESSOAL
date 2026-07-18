@@ -20,7 +20,8 @@ import {
   Check,
   Bell,
   ExternalLink,
-  Save
+  Save,
+  Edit2
 } from "lucide-react";
 import { db } from "../firebase";
 import {
@@ -50,6 +51,7 @@ interface AdminClient {
   diasRestantes: number;
   acessos: number;
   bloquearCompartilhamento?: boolean;
+  grupos?: string[];
   grupo1?: string;
   grupo2?: string;
   grupo3?: string;
@@ -63,7 +65,7 @@ export default function AdminPanel({
   setGlobalLoading
 }: AdminPanelProps) {
   const [clients, setClients] = useState<AdminClient[]>([]);
-  const [editedGroups, setEditedGroups] = useState<Record<string, { grupo1: string; grupo2: string; grupo3: string; grupo4: string }>>({});
+  const [editedGroups, setEditedGroups] = useState<Record<string, string[]>>({});
   const [search, setSearch] = useState("");
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [deletingClientToken, setDeletingClientToken] = useState<string | null>(null);
@@ -81,6 +83,8 @@ export default function AdminPanel({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [editingToken, setEditingToken] = useState<string | null>(null);
   const [tempTokenValue, setTempTokenValue] = useState("");
+  const [editingClientToken, setEditingClientToken] = useState<string | null>(null);
+  const [tempClientName, setTempClientName] = useState("");
 
   // Auto generate a random 4-digit key
   const handleGenerateKeySuggestion = () => {
@@ -97,6 +101,7 @@ export default function AdminPanel({
   useEffect(() => {
     fetchClients();
   }, [refreshTrigger]);
+
 
   const fetchClients = async () => {
     setGlobalLoading(true);
@@ -124,6 +129,10 @@ export default function AdminPanel({
           }
         }
 
+        const dynamicGrupos = data.grupos && Array.isArray(data.grupos)
+          ? data.grupos.map(g => String(g).trim().toUpperCase()).filter(Boolean)
+          : [data.grupo1, data.grupo2, data.grupo3, data.grupo4].map(g => String(g || "").trim().toUpperCase()).filter(Boolean);
+
         list.push({
           token: docSnap.id,
           nome: data.nome || "Usuário sem nome",
@@ -132,6 +141,7 @@ export default function AdminPanel({
           diasRestantes,
           acessos: data.acessos || 0,
           bloquearCompartilhamento: data.bloquearCompartilhamento || false,
+          grupos: dynamicGrupos,
           grupo1: data.grupo1 || "",
           grupo2: data.grupo2 || "",
           grupo3: data.grupo3 || "",
@@ -142,14 +152,12 @@ export default function AdminPanel({
       // Ordenar por nome
       list.sort((a, b) => a.nome.localeCompare(b.nome));
       
-      const initialGroups: Record<string, { grupo1: string; grupo2: string; grupo3: string; grupo4: string }> = {};
+      const initialGroups: Record<string, string[]> = {};
       list.forEach((c) => {
-        initialGroups[c.token] = {
-          grupo1: c.grupo1 || "",
-          grupo2: c.grupo2 || "",
-          grupo3: c.grupo3 || "",
-          grupo4: c.grupo4 || ""
-        };
+        const gList = c.grupos && c.grupos.length > 0
+          ? c.grupos.map(g => String(g).trim().toUpperCase())
+          : ["", ""];
+        initialGroups[c.token] = gList;
       });
       setEditedGroups(initialGroups);
       setClients(list);
@@ -247,6 +255,49 @@ export default function AdminPanel({
     }
   };
 
+  const handleUpdateClientName = async (clientToken: string, newNome: string) => {
+    const cleanNome = newNome.trim().toUpperCase();
+    if (!cleanNome) {
+      showToast("O nome do usuário não pode ser vazio!", true);
+      return;
+    }
+    setGlobalLoading(true);
+    try {
+      const clientDocRef = doc(db, "clientes", clientToken);
+      await setDoc(clientDocRef, { nome: cleanNome }, { merge: true });
+
+      // Update tasks where they are the creator to keep the creator name synchronized
+      const qCreated = query(collection(db, "tarefas"), where("tokenCriador", "==", clientToken));
+      const createdSnap = await getDocs(qCreated);
+      const updatePromises: Promise<any>[] = [];
+      createdSnap.forEach((taskDoc) => {
+        const ref = doc(db, "tarefas", taskDoc.id);
+        updatePromises.push(setDoc(ref, { criadorNome: cleanNome }, { merge: true }));
+      });
+
+      // Also tasks owned by them directly
+      const qOwned = query(collection(db, "tarefas"), where("token", "==", clientToken));
+      const ownedSnap = await getDocs(qOwned);
+      ownedSnap.forEach((taskDoc) => {
+        if (!taskDoc.data().tokenCriador || taskDoc.data().tokenCriador === clientToken) {
+          const ref = doc(db, "tarefas", taskDoc.id);
+          updatePromises.push(setDoc(ref, { criadorNome: cleanNome }, { merge: true }));
+        }
+      });
+
+      if (updatePromises.length > 0) {
+        await Promise.all(updatePromises);
+      }
+
+      showToast("Nome do usuário atualizado com sucesso! 👤");
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err: any) {
+      showToast("Erro ao atualizar nome do usuário: " + err.message, true);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
   const handleUpdateClientToken = async (oldToken: string, newTokenRaw: string) => {
     const newToken = newTokenRaw.trim();
     if (!newToken) {
@@ -322,27 +373,18 @@ export default function AdminPanel({
     }
   };
 
-  const handleUpdateGroupLocal = (clientToken: string, field: "grupo1" | "grupo2" | "grupo3" | "grupo4", value: string) => {
-    setEditedGroups(prev => ({
-      ...prev,
-      [clientToken]: {
-        ...prev[clientToken],
-        [field]: value
-      }
-    }));
-  };
-
   const handleSavePanelGroups = async () => {
     setGlobalLoading(true);
     try {
       const savePromises = Object.entries(editedGroups).map(async ([clientToken, groups]) => {
         const clientDocRef = doc(db, "clientes", clientToken);
-        const typedGroups = groups as { grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string };
+        const groupsArray = ((groups as string[]) || []).map(g => g.trim()).filter(Boolean);
         await setDoc(clientDocRef, {
-          grupo1: (typedGroups.grupo1 || "").trim(),
-          grupo2: (typedGroups.grupo2 || "").trim(),
-          grupo3: (typedGroups.grupo3 || "").trim(),
-          grupo4: (typedGroups.grupo4 || "").trim()
+          grupos: groupsArray,
+          grupo1: groupsArray[0] || "",
+          grupo2: groupsArray[1] || "",
+          grupo3: groupsArray[2] || "",
+          grupo4: groupsArray[3] || ""
         }, { merge: true });
       });
 
@@ -353,6 +395,37 @@ export default function AdminPanel({
       showToast("Erro ao salvar grupos: " + err.message, true);
     } finally {
       setGlobalLoading(false);
+    }
+  };
+
+  const handleSaveSingleClientGroups = async (clientToken: string, groups: string[]) => {
+    try {
+      const clientDocRef = doc(db, "clientes", clientToken);
+      const groupsArray = ((groups as string[]) || []).map(g => g.trim()).filter(Boolean);
+      await setDoc(clientDocRef, {
+        grupos: groupsArray,
+        grupo1: groupsArray[0] || "",
+        grupo2: groupsArray[1] || "",
+        grupo3: groupsArray[2] || "",
+        grupo4: groupsArray[3] || ""
+      }, { merge: true });
+
+      // Update local clients state so that UI updates instantly
+      setClients(prev => prev.map(cli => {
+        if (cli.token === clientToken) {
+          return {
+            ...cli,
+            grupos: groupsArray,
+            grupo1: groupsArray[0] || "",
+            grupo2: groupsArray[1] || "",
+            grupo3: groupsArray[2] || "",
+            grupo4: groupsArray[3] || ""
+          };
+        }
+        return cli;
+      }));
+    } catch (err: any) {
+      console.error("Erro ao salvar grupo automaticamente:", err);
     }
   };
 
@@ -471,9 +544,26 @@ export default function AdminPanel({
         </div>
       </div>
 
+      {/* Grupo Explanatory Info Card */}
+      <div className="bg-indigo-950/20 border border-indigo-500/10 p-4 rounded-2xl flex items-start gap-3 text-slate-400 text-xs leading-relaxed">
+            <Users className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
+            <div>
+              <strong className="text-indigo-300 font-bold block mb-1">Entendendo o Compartilhamento de Grupos:</strong>
+              <p className="text-slate-300 mb-1">
+                Os <strong className="text-slate-100">Membros Compartilhados</strong> listados em cada usuário representam as pessoas que possuem <strong>pelo menos um grupo em comum</strong> com ele.
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-400">
+                <li>Os grupos <strong className="text-slate-300">NÃO</strong> são vinculados por ordem ou posição dos campos (o primeiro grupo de MILLER DS não é vinculado apenas ao primeiro nome de outro usuário).</li>
+                <li>Se o <strong className="text-slate-200">MILLER DS</strong> e o <strong className="text-slate-200">PAULO DS</strong> estão configurados no grupo <strong className="text-indigo-400 font-mono font-bold">5</strong>, ambos se enxergarão. Se o usuário <strong className="text-slate-200">Miller</strong> também tiver o grupo <strong className="text-indigo-400 font-mono font-bold">5</strong>, ele também será listado.</li>
+                <li>Para desvincular ou parar de compartilhar entre determinados membros, basta remover/limpar o código daquele grupo do campo de quem você deseja remover.</li>
+                <li><strong className="text-emerald-400 font-mono">⚡ Dica:</strong> As alterações de grupos são salvas <strong>automaticamente</strong> ao clicar fora do campo (onBlur) ou ao pressionar <strong>Enter</strong>!</li>
+              </ul>
+            </div>
+          </div>
 
-      {/* Control Area */}
-      <div className="flex flex-col sm:flex-row items-center gap-3 justify-between">
+
+          {/* Control Area */}
+          <div className="flex flex-col sm:flex-row items-center gap-3 justify-between">
         <div className="relative w-full sm:w-80">
           <Search className="absolute left-4 top-3.5 w-4 h-4 text-slate-400" />
           <input
@@ -522,48 +612,139 @@ export default function AdminPanel({
                 {/* Client Info */}
                 <div className="flex-grow min-w-0">
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="text-base font-semibold text-slate-100">{c.nome}</span>
+                    {editingClientToken === c.token ? (
+                      <div className="flex items-center gap-1.5 bg-slate-950/80 border border-indigo-500/30 px-2 py-1 rounded-xl">
+                        <input
+                          type="text"
+                          value={tempClientName}
+                          onChange={(e) => setTempClientName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleUpdateClientName(c.token, tempClientName);
+                              setEditingClientToken(null);
+                            } else if (e.key === "Escape") {
+                              setEditingClientToken(null);
+                            }
+                          }}
+                          className="bg-transparent text-slate-100 text-sm font-semibold focus:outline-none w-32 uppercase"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => {
+                            handleUpdateClientName(c.token, tempClientName);
+                            setEditingClientToken(null);
+                          }}
+                          className="text-emerald-400 hover:text-emerald-300 transition-colors p-0.5 cursor-pointer"
+                          title="Salvar"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setEditingClientToken(null)}
+                          className="text-rose-400 hover:text-rose-300 transition-colors p-0.5 cursor-pointer"
+                          title="Cancelar"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 group/name">
+                        <span className="text-base font-semibold text-slate-100 uppercase">{c.nome}</span>
+                        <button
+                          onClick={() => {
+                            setEditingClientToken(c.token);
+                            setTempClientName(c.nome);
+                          }}
+                          className="p-1 text-slate-500 hover:text-indigo-400 transition-colors opacity-0 group-hover/name:opacity-100 focus:opacity-100 cursor-pointer"
+                          title="Editar Nome"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                     
                     {/* Campos de Grupo de Compartilhamento */}
                     <div className="inline-flex items-center gap-1 bg-slate-950 px-2.5 py-1 border border-slate-800 rounded-lg text-[10px] font-sans text-slate-300">
                       <Users className="w-3.5 h-3.5 text-indigo-400 mr-0.5" />
                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mr-1">Grupos:</span>
-                      <input
-                        type="text"
-                        placeholder="Nenhum"
-                        value={editedGroups[c.token]?.grupo1 || ""}
-                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo1", e.target.value)}
-                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
-                        title="ID do Grupo 1"
-                      />
-                      <span className="text-slate-800 font-bold">|</span>
-                      <input
-                        type="text"
-                        placeholder="Nenhum"
-                        value={editedGroups[c.token]?.grupo2 || ""}
-                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo2", e.target.value)}
-                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
-                        title="ID do Grupo 2"
-                      />
-                      <span className="text-slate-800 font-bold">|</span>
-                      <input
-                        type="text"
-                        placeholder="Nenhum"
-                        value={editedGroups[c.token]?.grupo3 || ""}
-                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo3", e.target.value)}
-                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
-                        title="ID do Grupo 3"
-                      />
-                      <span className="text-slate-800 font-bold">|</span>
-                      <input
-                        type="text"
-                        placeholder="Nenhum"
-                        value={editedGroups[c.token]?.grupo4 || ""}
-                        onChange={(e) => handleUpdateGroupLocal(c.token, "grupo4", e.target.value)}
-                        className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
-                        title="ID do Grupo 4"
-                      />
+                      {(editedGroups[c.token] || ["", ""]).map((groupValue, index) => (
+                        <React.Fragment key={index}>
+                          {index > 0 && <span className="text-slate-800 font-bold">|</span>}
+                          <input
+                            type="text"
+                            placeholder="Nenhum"
+                            value={groupValue || ""}
+                            onChange={(e) => {
+                              const newGroups = [...(editedGroups[c.token] || ["", ""])];
+                              newGroups[index] = e.target.value.toUpperCase();
+                              setEditedGroups(prev => ({
+                                ...prev,
+                                [c.token]: newGroups
+                              }));
+                            }}
+                            onBlur={async () => {
+                              const currentGroups = editedGroups[c.token] || ["", ""];
+                              await handleSaveSingleClientGroups(c.token, currentGroups);
+                            }}
+                            onKeyDown={async (e) => {
+                              if (e.key === "Enter") {
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }}
+                            className="w-10 bg-slate-900/80 text-center text-slate-100 font-mono font-bold border border-slate-700/60 rounded px-1 py-0.5 text-[10px] uppercase focus:border-indigo-500 focus:outline-none transition-all"
+                            title={`Grupo ${index + 1}`}
+                          />
+                        </React.Fragment>
+                      ))}
+                      
+                      {/* Botão de adicionar mais um grupo */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const current = editedGroups[c.token] || ["", ""];
+                          setEditedGroups(prev => ({
+                            ...prev,
+                            [c.token]: [...current, ""]
+                          }));
+                        }}
+                        className="ml-1 p-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-all cursor-pointer flex items-center justify-center"
+                        title="Adicionar novo grupo"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
                     </div>
+
+                    {/* Live connected users display list */}
+                    {(() => {
+                      const myCurrentGroups = (editedGroups[c.token] || [])
+                        .map(g => String(g || "").trim().toUpperCase())
+                        .filter(Boolean);
+
+                      if (myCurrentGroups.length === 0) return null;
+
+                      const otherClientsInSameGroups = clients.filter(other => {
+                        if (other.token === c.token) return false;
+                        const otherGroups = (editedGroups[other.token] || [])
+                          .map(g => String(g || "").trim().toUpperCase())
+                          .filter(Boolean);
+                        return myCurrentGroups.some(g => otherGroups.includes(g));
+                      });
+
+                      if (otherClientsInSameGroups.length === 0) return null;
+
+                      return (
+                        <div className="mt-2 text-[10px] bg-indigo-950/20 border border-indigo-500/10 px-2.5 py-1 rounded-xl text-slate-400 flex flex-wrap gap-1.5 items-center w-full max-w-xl">
+                          <span className="font-bold text-indigo-400 uppercase tracking-wider text-[8px]">Membros Compartilhados:</span>
+                          <div className="flex flex-wrap gap-1">
+                            {otherClientsInSameGroups.map((other) => (
+                              <span key={other.token} className="text-slate-200 font-bold bg-slate-900/90 border border-slate-800 px-1.5 py-0.5 rounded text-[9px]">
+                                {other.nome}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     
                      {/* Copyable & Editable Access Key */}
                      {editingToken === c.token ? (

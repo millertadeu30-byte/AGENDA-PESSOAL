@@ -134,7 +134,7 @@ export default function App() {
   // Task sharing states
   const [ownedTasks, setOwnedTasks] = useState<Tarefa[]>([]);
   const [sharedTasksList, setSharedTasksList] = useState<Tarefa[]>([]);
-  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[]>([]);
+  const [allClients, setAllClients] = useState<{ token: string; nome: string; bloquearCompartilhamento?: boolean; grupos?: string[]; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[]>([]);
   const [taskSharedWith, setTaskSharedWith] = useState<string[]>([]);
   const [editSharedWith, setEditSharedWith] = useState<string[]>([]);
 
@@ -467,6 +467,10 @@ export default function App() {
       setNomeUsuario(data.nome || "Usuário");
       safeStorage.setItem("taskControlProUserName", data.nome || "Usuário");
 
+      const userGrupos = data.grupos && Array.isArray(data.grupos)
+        ? data.grupos.map(g => String(g).trim().toUpperCase()).filter(Boolean)
+        : [data.grupo1, data.grupo2, data.grupo3, data.grupo4].map(g => String(g || "").trim().toUpperCase()).filter(Boolean);
+
       setClientData(prev => ({
         pendentes: prev?.pendentes || [],
         historico: prev?.historico || [],
@@ -480,8 +484,11 @@ export default function App() {
         telefone: data.telefone || "",
         bloquearCompartilhamento: data.bloquearCompartilhamento || false,
         compartilhamentosAceitos: data.compartilhamentosAceitos || [],
+        grupos: userGrupos,
         grupo1: data.grupo1 || "",
-        grupo2: data.grupo2 || ""
+        grupo2: data.grupo2 || "",
+        grupo3: data.grupo3 || "",
+        grupo4: data.grupo4 || ""
       }));
     }, (error) => {
       console.error("Erro na escuta da conta:", error);
@@ -497,14 +504,18 @@ export default function App() {
     const fetchAllClients = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, "clientes"));
-        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[] = [];
+        const list: { token: string; nome: string; bloquearCompartilhamento?: boolean; grupos?: string[]; grupo1?: string; grupo2?: string; grupo3?: string; grupo4?: string }[] = [];
         querySnapshot.forEach((docSnap) => {
           if (docSnap.id !== "8619" && docSnap.id !== token) {
             const data = docSnap.data();
+            const clientGrupos = data.grupos && Array.isArray(data.grupos)
+              ? data.grupos.map(g => String(g).trim().toUpperCase()).filter(Boolean)
+              : [data.grupo1, data.grupo2, data.grupo3, data.grupo4].map(g => String(g || "").trim().toUpperCase()).filter(Boolean);
             list.push({
               token: docSnap.id,
               nome: data.nome || "Sem Nome",
               bloquearCompartilhamento: !!data.bloquearCompartilhamento,
+              grupos: clientGrupos,
               grupo1: data.grupo1 || "",
               grupo2: data.grupo2 || "",
               grupo3: data.grupo3 || "",
@@ -584,8 +595,25 @@ export default function App() {
     const list = Array.from(allTasksMap.values());
 
     // Separar pendentes e históricos
-    const pendentes = list.filter(t => t.status === "Pendente");
-    const historico = list.filter(t => t.status === "Realizada");
+    const pendentes = list.filter(t => {
+      if (t.status === "Realizada") return false;
+      const isCreator = t.token === token || t.tokenCriador === token;
+      // Se for destinatário e já deu OK, não é mais pendente para ele
+      if (!isCreator && t.concluidoPor?.includes(token)) {
+        return false;
+      }
+      return true;
+    });
+
+    const historico = list.filter(t => {
+      if (t.status === "Realizada") return true;
+      const isCreator = t.token === token || t.tokenCriador === token;
+      // Se for destinatário e já deu OK, é histórico para ele
+      if (!isCreator && t.concluidoPor?.includes(token)) {
+        return true;
+      }
+      return false;
+    });
 
     // Ordenar pendentes por data e horário crescentes (antigas/vencidas no topo)
     pendentes.sort((a, b) => {
@@ -883,50 +911,110 @@ export default function App() {
     try {
       const taskRef = doc(db, "tarefas", idTarefa);
 
-      if (task.recorrencia && task.recorrencia !== "Nenhuma") {
-        const currentDatetime = new Date(`${task.data}T${task.horario || "12:00"}`);
+      // Se a tarefa for compartilhada (compartilhadoCom tem elementos)
+      if (task.compartilhadoCom && task.compartilhadoCom.length > 0) {
+        const concluidoPor = task.concluidoPor || [];
+        const novoConcluidoPor = concluidoPor.includes(token) ? concluidoPor : [...concluidoPor, token];
         
-        const cleanRec = task.recorrencia.trim().toLowerCase();
-        if (cleanRec === "1 semana") {
-          currentDatetime.setDate(currentDatetime.getDate() + 7);
-        } else if (cleanRec === "15 dias") {
-          currentDatetime.setDate(currentDatetime.getDate() + 15);
-        } else if (cleanRec === "mensal") {
-          currentDatetime.setMonth(currentDatetime.getMonth() + 1);
-        } else if (cleanRec === "anual") {
-          currentDatetime.setFullYear(currentDatetime.getFullYear() + 1);
+        // Verifica se TODOS os participantes compartilhadoCom deram OK
+        const todosDeramOk = task.compartilhadoCom.every(tok => novoConcluidoPor.includes(tok));
+
+        if (todosDeramOk) {
+          // Se todos deram OK, completamos a tarefa ou avançamos a recorrência
+          if (task.recorrencia && task.recorrencia !== "Nenhuma") {
+            const currentDatetime = new Date(`${task.data}T${task.horario || "12:00"}`);
+            const cleanRec = task.recorrencia.trim().toLowerCase();
+            if (cleanRec === "1 semana") {
+              currentDatetime.setDate(currentDatetime.getDate() + 7);
+            } else if (cleanRec === "15 dias") {
+              currentDatetime.setDate(currentDatetime.getDate() + 15);
+            } else if (cleanRec === "mensal") {
+              currentDatetime.setMonth(currentDatetime.getMonth() + 1);
+            } else if (cleanRec === "anual") {
+              currentDatetime.setFullYear(currentDatetime.getFullYear() + 1);
+            } else {
+              const match = cleanRec.match(/(\d+)/);
+              if (match) {
+                const days = parseInt(match[1], 10);
+                currentDatetime.setDate(currentDatetime.getDate() + (isNaN(days) ? 1 : days));
+              } else {
+                currentDatetime.setDate(currentDatetime.getDate() + 1);
+              }
+            }
+
+            const ano = currentDatetime.getFullYear();
+            const mes = String(currentDatetime.getMonth() + 1).padStart(2, "0");
+            const dia = String(currentDatetime.getDate()).padStart(2, "0");
+            const novaDataStr = `${ano}-${mes}-${dia}`;
+
+            await updateDoc(taskRef, {
+              data: novaDataStr,
+              notificado: false,
+              concluidoPor: [] // Reseta os OKs para o novo período
+            });
+            showToast("Todos deram OK! Tarefa recorrente avançada para o próximo prazo.");
+            playBeep("click");
+          } else {
+            await updateDoc(taskRef, {
+              status: "Realizada",
+              concluidoPor: novoConcluidoPor
+            });
+            showToast("Todos deram OK! Compromisso totalmente concluído.");
+            playBeep("click");
+          }
         } else {
-          // Extrai número de dias do padrão personalizado como "X Dias" ou "A cada X dias" ou apenas número
-          const match = cleanRec.match(/(\d+)/);
-          if (match) {
-            const days = parseInt(match[1], 10);
-            if (!isNaN(days) && days > 0) {
-              currentDatetime.setDate(currentDatetime.getDate() + days);
+          // Nem todos deram OK ainda. Apenas atualiza a lista de quem deu OK.
+          await updateDoc(taskRef, {
+            concluidoPor: novoConcluidoPor
+          });
+          showToast("Você marcou como OK! Aguardando os demais participantes.");
+          playBeep("click");
+        }
+      } else {
+        // Tarefa não compartilhada, conclui normalmente
+        if (task.recorrencia && task.recorrencia !== "Nenhuma") {
+          const currentDatetime = new Date(`${task.data}T${task.horario || "12:00"}`);
+          const cleanRec = task.recorrencia.trim().toLowerCase();
+          if (cleanRec === "1 semana") {
+            currentDatetime.setDate(currentDatetime.getDate() + 7);
+          } else if (cleanRec === "15 dias") {
+            currentDatetime.setDate(currentDatetime.getDate() + 15);
+          } else if (cleanRec === "mensal") {
+            currentDatetime.setMonth(currentDatetime.getMonth() + 1);
+          } else if (cleanRec === "anual") {
+            currentDatetime.setFullYear(currentDatetime.getFullYear() + 1);
+          } else {
+            const match = cleanRec.match(/(\d+)/);
+            if (match) {
+              const days = parseInt(match[1], 10);
+              if (!isNaN(days) && days > 0) {
+                currentDatetime.setDate(currentDatetime.getDate() + days);
+              } else {
+                currentDatetime.setDate(currentDatetime.getDate() + 1);
+              }
             } else {
               currentDatetime.setDate(currentDatetime.getDate() + 1);
             }
-          } else {
-            currentDatetime.setDate(currentDatetime.getDate() + 1);
           }
-        }
 
-        const ano = currentDatetime.getFullYear();
-        const mes = String(currentDatetime.getMonth() + 1).padStart(2, "0");
-        const dia = String(currentDatetime.getDate()).padStart(2, "0");
-        const novaDataStr = `${ano}-${mes}-${dia}`;
-        
-        await updateDoc(taskRef, {
-          data: novaDataStr,
-          notificado: false // Permite que seja notificado novamente no novo prazo
-        });
-        showToast("Tarefa recorrente avançada para o próximo prazo!");
-        playBeep("click");
-      } else {
-        await updateDoc(taskRef, {
-          status: "Realizada"
-        });
-        showToast("Tarefa concluída!");
-        playBeep("click");
+          const ano = currentDatetime.getFullYear();
+          const mes = String(currentDatetime.getMonth() + 1).padStart(2, "0");
+          const dia = String(currentDatetime.getDate()).padStart(2, "0");
+          const novaDataStr = `${ano}-${mes}-${dia}`;
+          
+          await updateDoc(taskRef, {
+            data: novaDataStr,
+            notificado: false
+          });
+          showToast("Tarefa recorrente avançada para o próximo prazo!");
+          playBeep("click");
+        } else {
+          await updateDoc(taskRef, {
+            status: "Realizada"
+          });
+          showToast("Tarefa concluída!");
+          playBeep("click");
+        }
       }
     } catch (err: any) {
       showToast("Erro ao concluir tarefa: " + err.message, true);
@@ -1670,21 +1758,9 @@ export default function App() {
                     {/* SELEÇÃO DE COMPARTILHAMENTO DE TAREFA */}
                     {(() => {
                       const sharedWithUs = allClients.filter(cli => {
-                        const gMe1 = clientData?.grupo1?.trim();
-                        const gMe2 = clientData?.grupo2?.trim();
-                        const gMe3 = clientData?.grupo3?.trim();
-                        const gMe4 = clientData?.grupo4?.trim();
-                        const gCli1 = cli.grupo1?.trim();
-                        const gCli2 = cli.grupo2?.trim();
-                        const gCli3 = cli.grupo3?.trim();
-                        const gCli4 = cli.grupo4?.trim();
-
-                        if (!gMe1 && !gMe2 && !gMe3 && !gMe4) return false;
-                        if (!gCli1 && !gCli2 && !gCli3 && !gCli4) return false;
-
-                        const myGroups = [gMe1, gMe2, gMe3, gMe4].filter(Boolean);
-                        const cliGroups = [gCli1, gCli2, gCli3, gCli4].filter(Boolean);
-
+                        const myGroups = clientData?.grupos || [];
+                        const cliGroups = cli.grupos || [];
+                        if (myGroups.length === 0 || cliGroups.length === 0) return false;
                         return myGroups.some(g => cliGroups.includes(g));
                       });
 
@@ -1883,15 +1959,32 @@ export default function App() {
                               </span>
                             ) : (
                               t.compartilhadoCom && t.compartilhadoCom.length > 0 && (() => {
-                                const sharedNames = t.compartilhadoCom
-                                  .map(tok => allClients.find(c => c.token === tok)?.nome)
-                                  .filter(Boolean)
-                                  .join(", ");
-                                if (!sharedNames) return null;
+                                const validShared = t.compartilhadoCom
+                                  .map(tok => {
+                                    const name = allClients.find(c => c.token === tok)?.nome;
+                                    if (!name) return null;
+                                    const isDone = t.concluidoPor?.includes(tok);
+                                    return { tok, name, isDone };
+                                  })
+                                  .filter((x): x is { tok: string; name: string; isDone: boolean } => x !== null);
+
+                                if (validShared.length === 0) return null;
+                                const tooltipText = validShared.map(x => `${x.name} (${x.isDone ? "OK" : "Pendente"})`).join(", ");
+
                                 return (
-                                  <span className="flex items-center gap-1.5 bg-slate-950/40 border border-slate-800/40 text-slate-400 px-2.5 py-1 rounded-lg font-sans" title={`Compartilhado com: ${sharedNames}`}>
-                                    <Users className="w-3.5 h-3.5 text-slate-500" />
-                                    <span>Compartilhado com: <strong className="text-slate-300">{sharedNames}</strong></span>
+                                  <span className="flex items-center flex-wrap gap-1 bg-slate-950/40 border border-slate-800/40 text-slate-400 px-2.5 py-1 rounded-lg font-sans" title={`Compartilhado com: ${tooltipText}`}>
+                                    <Users className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                                    <span className="text-[11px] text-slate-400">Compartilhado com:</span>
+                                    <span className="flex items-center flex-wrap gap-1 text-[11px]">
+                                      {validShared.map((item, idx) => (
+                                        <span key={item.tok} className="inline-flex items-center">
+                                          <strong className={item.isDone ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                                            {item.name}
+                                          </strong>
+                                          {idx < validShared.length - 1 && <span className="text-slate-500 mr-1">,</span>}
+                                        </span>
+                                      ))}
+                                    </span>
                                   </span>
                                 );
                               })()
@@ -2136,21 +2229,9 @@ export default function App() {
                 {/* EDIT COMPARTILHAMENTO */}
                 {(() => {
                   const sharedWithUs = allClients.filter(cli => {
-                    const gMe1 = clientData?.grupo1?.trim();
-                    const gMe2 = clientData?.grupo2?.trim();
-                    const gMe3 = clientData?.grupo3?.trim();
-                    const gMe4 = clientData?.grupo4?.trim();
-                    const gCli1 = cli.grupo1?.trim();
-                    const gCli2 = cli.grupo2?.trim();
-                    const gCli3 = cli.grupo3?.trim();
-                    const gCli4 = cli.grupo4?.trim();
-
-                    if (!gMe1 && !gMe2 && !gMe3 && !gMe4) return false;
-                    if (!gCli1 && !gCli2 && !gCli3 && !gCli4) return false;
-
-                    const myGroups = [gMe1, gMe2, gMe3, gMe4].filter(Boolean);
-                    const cliGroups = [gCli1, gCli2, gCli3, gCli4].filter(Boolean);
-
+                    const myGroups = clientData?.grupos || [];
+                    const cliGroups = cli.grupos || [];
+                    if (myGroups.length === 0 || cliGroups.length === 0) return false;
                     return myGroups.some(g => cliGroups.includes(g));
                   });
 

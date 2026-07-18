@@ -11,6 +11,7 @@ export interface Tarefa {
   compartilhadoCom?: string[]; // Tokens de quem compartilha
   criadorNome?: string; // Nome de quem criou a tarefa
   tokenCriador?: string; // Token de quem criou a tarefa
+  concluidoPor?: string[]; // Tokens de quem já deu OK na tarefa
 }
 
 export interface ClientData {
@@ -26,6 +27,7 @@ export interface ClientData {
   telefone?: string; // Celular principal do usuário
   bloquearCompartilhamento?: boolean; // Bloqueio pelo administrador
   compartilhamentosAceitos?: string[]; // Chaves aceitas de compartilhamento
+  grupos?: string[]; // Lista dinâmica de grupos
   grupo1?: string; // Primeiro grupo para compartilhamento
   grupo2?: string; // Segundo grupo para compartilhamento
   grupo3?: string; // Terceiro grupo para compartilhamento
